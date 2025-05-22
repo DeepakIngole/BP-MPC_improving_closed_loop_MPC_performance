@@ -47,6 +47,8 @@ X0_MAG = 2
 NOISE = True
 NOISE_MAG = 0.5
 
+# number of models used in robust GD
+N_MODELS = 10
 
 ### CREATE DYNAMICS ------------------------------------------------------------------------
 
@@ -64,12 +66,12 @@ dyn = Dynamics(dyn_dict,jit=COMPILE_DYNAMICS)
 n_x, n_u = dyn.dim['x'], dyn.dim['u']
 
 # set initial conditions
-x0 = ca.DM.ones(n_x,1)#ca.DM( X0_MAG * (np.ones((n_x,1)) + 2*np.random.rand(n_x,1)) )
+x0 = ca.DM.ones(n_x,1)
+# x0 = ca.DM( X0_MAG * (np.ones((n_x,1)) + 2*np.random.rand(n_x,1)) )
 theta_uncertainty = THETA_UNCERTAINTY_RANGE*(np.ones(theta.shape)+2*np.random.rand(*theta.shape))
 theta0 = ca.DM( np.multiply(theta_uncertainty,np.array(true_theta)) )
 print(f'Initial condition: {x0}')
 print(f'Initial parameter estimate: {theta0}')
-
 
 # sample noise if requested
 if NOISE:
@@ -165,8 +167,9 @@ p = upper_level.param['p']
 j_p = upper_level.param['J_p']
 k = upper_level.param['k']
 
-# create update function
-parameter_update, parameter_init = gradient_descent(rho=0.0001,eta=0.8,log=True)
+# create update functions
+parameter_update_gd, parameter_init_gd = gradient_descent(rho=0.0001,eta=0.8,log=True)
+parameter_update_robust, parameter_init_robust = robust_gradient_descent(rho=0.0001,eta=0.8,n_models=N_MODELS,n_p=p.shape[0],log=True)
 
 # create system identification
 sys_id_update, sys_id_init, _ = rls(
@@ -179,8 +182,8 @@ sys_id_update, sys_id_init, _ = rls(
 
 # update upper-level algorithm
 upper_level.set_alg(
-    parameter_update=parameter_update,
-    parameter_init=parameter_init,
+    parameter_update=parameter_update_gd,
+    parameter_init=parameter_init_gd,
     sys_id_update=sys_id_update,
     sys_id_init=sys_id_init)
 
@@ -205,10 +208,25 @@ scenario.set_init(init_dict)
 # test closed loop
 sim_list,_,p_best = scenario.closed_loop(options={'use_true_model':False,'max_k':ITERATIONS,'true_theta':np.array(true_theta)})
 
-# retrieve thetas
-estimation_error = [ca.norm_2(ca.fabs(elem.psi['theta']-true_theta)) for elem in sim_list]
+# modify upper-level algorithm
+upper_level.set_alg(
+    parameter_update=parameter_update_robust,
+    parameter_init=parameter_init_robust,
+    sys_id_update=sys_id_update,
+    sys_id_init=sys_id_init)
 
-print(estimation_error)
+# update scenario
+scenario.update(upper_level=upper_level)
+
+# re-apply initialization
+scenario.set_init(init_dict)
+
+# test again
+sim_list,_,p_best = scenario.closed_loop(options={'use_true_model':False,'max_k':ITERATIONS,'true_theta':np.array(true_theta)})
+
+# retrieve thetas
+# estimation_error = [ca.norm_2(ca.fabs(elem.psi['theta']-true_theta)) for elem in sim_list]
+# print(estimation_error)
 
 # get last value of p
 # p_final = SIM[-1].p
