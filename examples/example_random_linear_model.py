@@ -17,7 +17,7 @@ from src.plotter import Plotter
 from src.upper_level import UpperLevel
 import numpy as np
 from utils.parameter_update import average_gradient_descent, robust_gradient_descent, gradient_descent
-from utils.sys_id import rls
+from utils.sys_id import rls, rls_robust
 
 # cleanup jit files
 cleanup()
@@ -29,9 +29,9 @@ COMPILE_QP_DENSE = False
 COMPILE_JAC = False
 
 # horizons
-UPPER_HORIZON = 20
+UPPER_HORIZON = 25
 MPC_HORIZON = 10
-ITERATIONS = 100
+ITERATIONS = 20
 
 # penalties on constraint violation (closed-loop)
 L2_PENALTY = 10
@@ -176,7 +176,20 @@ sys_id_update, sys_id_init, _ = rls(
     dynamics=dyn,
     horizon=UPPER_HORIZON,
     lam=0.1,
-    theta0=theta0,
+    theta0=theta0[0],
+    jit=False,
+    idx_pf=range(theta0.shape[0]))
+
+# alternative system identification
+sys_id_update_robust, sys_id_init_robust, _ = rls_robust(
+    dynamics=dyn,
+    n_models=N_MODELS,
+    R=1,
+    S=3,
+    delta=0.01,
+    horizon=UPPER_HORIZON,
+    lam=0.1,
+    theta0=theta0[0],
     jit=False,
     idx_pf=range(theta0.shape[0]))
 
@@ -187,12 +200,8 @@ upper_level.set_alg(
     sys_id_update=sys_id_update,
     sys_id_init=sys_id_init)
 
-
-# upper_level.set_alg(*average_gradient_descent(rho=0.0001,eta=0.51,log=True))
-# upper_level.set_alg(*robust_gradient_descent(rho=0.0001,eta=0.51,n_models=len(theta0),n_p=p.shape[0],log=True,verbose=False))
-
 # test derivatives
-# # out = tests.derivatives(mod)
+# out = tests.derivatives(mod)
 
 
 ### CREATE SCENARIO -----------------------------------------------------------
@@ -212,17 +221,19 @@ sim_list,_,p_best = scenario.closed_loop(options={'use_true_model':False,'max_k'
 upper_level.set_alg(
     parameter_update=parameter_update_robust,
     parameter_init=parameter_init_robust,
-    sys_id_update=sys_id_update,
-    sys_id_init=sys_id_init)
+    sys_id_update=sys_id_update_robust,
+    sys_id_init=sys_id_init_robust)
 
 # update scenario
 scenario.update(upper_level=upper_level)
 
 # re-apply initialization
+init_dict['theta'] = [init_dict['theta'] for _ in range(N_MODELS)] # needed for compatibility
 scenario.set_init(init_dict)
 
 # test again
-sim_list,_,p_best = scenario.closed_loop(options={'use_true_model':False,'max_k':ITERATIONS,'true_theta':np.array(true_theta)})
+simulation_options = {'simulate_parallel_models':True,'use_true_model':False,'max_k':ITERATIONS,'true_theta':np.array(true_theta)}
+sim_list,_,p_best = scenario.closed_loop(options=simulation_options)
 
 # retrieve thetas
 # estimation_error = [ca.norm_2(ca.fabs(elem.psi['theta']-true_theta)) for elem in sim_list]

@@ -907,11 +907,13 @@ class Scenario:
         # check if multiple models should be simulated
         if theta is not None and self._options['simulate_parallel_models']:
 
+            #TODO: better check for n_models if theta0 contains many theta. Is it even worth it?
+
             # get number of models (columns of theta)
             n_models = int(theta[0].shape[1]) if isinstance(theta,list) else theta.shape[1]
 
             # check that mapped (nominal) dynamics have been created
-            if not hasattr(self,'_mapped'):
+            if not self._mapped:
                 self.create_mapped_dynamics(n_models,self._options['compile_mapped_dynamics'])
             else:
                 # if they have been created, check that n_models matches
@@ -1066,7 +1068,9 @@ class Scenario:
                 case 0:
                     pass
                 case 1:
-                    to_print = f"Iteration: {k}, cost: {track_cost}, J: {ca.DM(np.linalg.norm(j_p,axis=0))}, e : {ca.sum1(ca.fmax(cst_viol,0))}"
+                    j_to_print = ca.DM(np.linalg.norm(j_p,axis=0)) if n_models == 1 else ca.DM(np.mean(np.linalg.norm(j_p,axis=0)))
+
+                    to_print = f"Iteration: {k}, cost: {track_cost}, J: {j_to_print}, e : {ca.sum1(ca.fmax(cst_viol,0))}"
 
                     if sys_id and self.options['true_theta'] is not np.zeros(1):
 

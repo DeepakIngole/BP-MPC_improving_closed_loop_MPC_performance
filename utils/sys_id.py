@@ -5,6 +5,7 @@ from scipy.linalg import solve,lstsq
 import time
 import os,sys
 from typeguard import typechecked
+from utils.sample_utils import sample_unit_ball
 
 # add source path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
@@ -141,6 +142,112 @@ def ls(dynamics:Dynamics,horizon:int,lam:float,theta0:Optional[ca.DM]=None,jit:O
     
     return sys_id_update, sys_id_init, phi_func
     
+@typechecked
+def rls_robust(
+        dynamics:Dynamics,
+        n_models:int,
+        R:float,
+        S:float,
+        delta:float,
+        horizon:int,
+        lam:float,
+        theta0:ca.DM=None,
+        jit:bool=False,
+        idx_pf:Optional[range]=None
+    ) -> Tuple[Callable, Callable, ca.Function]:
+
+    # form function defining the confidence region
+    def c_k_func(beta_k):
+        return R*np.sqrt( ( n_theta*np.log(beta_k) - n_theta*np.log(lam) - np.log(delta) ) / ( beta_k ) ) + lam**0.5*S/np.sqrt(beta_k)
+
+    # obtain phi function
+    phi = get_phi(dynamics,horizon,jit)
+
+    # check that theta is initialized
+    if theta0 is None:
+        assert 'theta' in dynamics.init, 'Theta must be initialized.'
+        theta0 = dynamics.init['theta']
+
+    # precompute dimension of theta
+    n_theta = dynamics.param_nom['theta'].shape[0]
+    n_x = dynamics.dim['x']
+
+    def sys_id_update(sim:SimVar,running_vars:dict,k:int) -> dict:
+        """
+        Performs a recursive least squares (RLS) update for system identification.
+
+        This function updates the system identification variables (A, b, theta) using the current simulation data.
+        It computes feature vectors and output vectors from the simulation, reshapes them as needed, and applies
+        the RLS update equations to refine the model parameters.
+
+        Args:
+            sim (SimVar): Simulation variable object containing state and input trajectories.
+            running_vars (dict): Dictionary containing the current values of 'A' and 'b' for the RLS update.
+            k (int): Current time step index (unused in the function body).
+
+        Returns:
+            dict: Updated dictionary of system identification variables, merging the previous `sim.psi` with the
+                new values for 'A', 'b', and 'theta'.
+        """
+
+        # get past a and 
+        a_k = running_vars['A']
+        b_k = running_vars['b']
+
+        # compute feature vectors
+        phi_k = np.array(phi(sim.x[:,:-1],sim.u))
+
+        # compute output vector
+        z_k = np.array(sim.x[:,1:])
+
+        # reshape
+        phi_reshaped = phi_k.reshape(n_x,n_theta,horizon,order='F').transpose(2,1,0)
+
+        # update a and b
+        a_k_1 = ca.DM(a_k + np.einsum('nij,njk->ik', phi_reshaped, phi_reshaped.transpose(0,2,1)))
+        b_k_1 = ca.DM(b_k + np.atleast_2d(np.einsum('nij,nj->i', phi_reshaped, z_k.T)).T)
+
+        # compute new model
+        theta_single = ca.solve(a_k_1,b_k_1)
+
+        # get radius of uncertainty ball
+        c_k = c_k_func(np.linalg.svdvals(np.array(a_k_1))[-1])
+        print(c_k)
+
+        # generate random theta samples
+        theta = ca.DM(theta_single + c_k*sample_unit_ball(n_theta,n_models).T)
+
+        # run through the horizon and perform the RLS updates
+        new_psi = {'A':a_k_1,'b':b_k_1,'theta':theta}
+
+        # check if pf should be updated too
+        if idx_pf is not None:
+
+            # get current pf
+            pf_new = sim.pf
+
+            # update entries
+            pf_new[idx_pf] = theta_single
+
+            # add to dictionary
+            new_psi['pf'] = pf_new
+
+        return new_psi
+    
+    def sys_id_init() -> dict:
+        """
+        Initializes and returns a dictionary containing system identification parameters.
+
+        Returns:
+            dict: A dictionary with the following keys:
+                - 'A': A square diagonal matrix of size n_theta, scaled by lam (ca.DM.eye(n_theta) * lam).
+                - 'b': The initial parameter vector theta0.
+        """
+        return {'A':ca.DM.eye(n_theta)*lam,'b':theta0}
+    
+    return sys_id_update, sys_id_init, phi
+
+
 @typechecked
 def rls(dynamics:Dynamics,horizon:int,lam:float,theta0:ca.DM=None,jit:bool=False,idx_pf:Optional[range]=None) -> Tuple[Callable, Callable, ca.Function]:
     """
