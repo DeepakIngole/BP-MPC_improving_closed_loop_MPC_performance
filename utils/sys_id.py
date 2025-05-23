@@ -249,7 +249,14 @@ def rls_robust(
 
 
 @typechecked
-def rls(dynamics:Dynamics,horizon:int,lam:float,theta0:ca.DM=None,jit:bool=False,idx_pf:Optional[range]=None) -> Tuple[Callable, Callable, ca.Function]:
+def rls(
+        dynamics:Dynamics,
+        horizon:int,
+        lam:float,
+        theta0:Optional[ca.DM]=None,
+        jit:Optional[bool]=False,
+        idx_pf:Optional[range]=None
+    ) -> Tuple[Callable, Callable, ca.Function]:
     """
     Recursive Least Squares (RLS) system identification for parameter-affine models.
     This function constructs RLS update and initialization routines for online system identification

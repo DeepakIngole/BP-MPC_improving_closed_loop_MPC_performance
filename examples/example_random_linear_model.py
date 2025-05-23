@@ -18,6 +18,7 @@ from src.upper_level import UpperLevel
 import numpy as np
 from utils.parameter_update import average_gradient_descent, robust_gradient_descent, gradient_descent
 from utils.sys_id import rls, rls_robust
+from utils.poles_to_linear_sys import poles_to_linear_sys
 
 # cleanup jit files
 cleanup()
@@ -27,6 +28,15 @@ COMPILE_DYNAMICS = False
 COMPILE_QP_SPARSE = False
 COMPILE_QP_DENSE = False
 COMPILE_JAC = False
+
+# SAMPLING TIME FOR DYNAMICS
+TS = 0.3
+
+# state dimension
+NX = 4
+
+# magnitude of (continuous time) poles
+POLE_MAG = [-2,1]
 
 # horizons
 UPPER_HORIZON = 25
@@ -53,8 +63,7 @@ N_MODELS = 10
 ### CREATE DYNAMICS ------------------------------------------------------------------------
 
 # create dictionary with parameters of cart pendulum
-dyn_dict,true_theta = random_linear.dynamics(Ts=0.3,n_x=4,use_w=NOISE,pole_mag=[-2,1])
-print(true_theta)
+dyn_dict,true_theta,true_poles = random_linear.dynamics(Ts=TS,n_x=NX,use_w=NOISE,pole_mag=POLE_MAG,verbose=True)
 
 # model uncertainty parameter
 theta = dyn_dict['theta']
@@ -68,8 +77,18 @@ n_x, n_u = dyn.dim['x'], dyn.dim['u']
 # set initial conditions
 x0 = ca.DM.ones(n_x,1)
 # x0 = ca.DM( X0_MAG * (np.ones((n_x,1)) + 2*np.random.rand(n_x,1)) )
-theta_uncertainty = THETA_UNCERTAINTY_RANGE*(np.ones(theta.shape)+2*np.random.rand(*theta.shape))
-theta0 = ca.DM( np.multiply(theta_uncertainty,np.array(true_theta)) )
+
+# create new system with uncertainty by sampling new poles within the specified
+# uncertainty range
+poles_uncertain = THETA_UNCERTAINTY_RANGE*(np.ones(n_x)+2*np.random.rand(n_x))
+A_uncertain,B_uncertain,eig_A_uncertain = poles_to_linear_sys(poles_uncertain,Ts=TS)
+theta0 = ca.DM(ca.vertcat(ca.vec(A_uncertain),ca.vec(B_uncertain)))
+
+# another option is adding uncertainty to theta directly
+# theta_uncertainty = THETA_UNCERTAINTY_RANGE*(np.ones(theta.shape)+2*np.random.rand(*theta.shape))
+# theta0 = ca.DM( np.multiply(theta_uncertainty,np.array(true_theta)) )
+
+print(f'Eigenvalues of uncertain system: {eig_A_uncertain}')
 print(f'Initial condition: {x0}')
 print(f'Initial parameter estimate: {theta0}')
 
@@ -169,14 +188,14 @@ k = upper_level.param['k']
 
 # create update functions
 parameter_update_gd, parameter_init_gd = gradient_descent(rho=0.0001,eta=0.8,log=True)
-parameter_update_robust, parameter_init_robust = robust_gradient_descent(rho=0.0001,eta=0.8,n_models=N_MODELS,n_p=p.shape[0],log=True)
+parameter_update_robust, parameter_init_robust = robust_gradient_descent(rho=0.0001,eta=1,n_models=N_MODELS,n_p=p.shape[0],log=False)
 
 # create system identification
 sys_id_update, sys_id_init, _ = rls(
     dynamics=dyn,
     horizon=UPPER_HORIZON,
     lam=0.1,
-    theta0=theta0[0],
+    theta0=theta0,
     jit=False,
     idx_pf=range(theta0.shape[0]))
 
@@ -189,7 +208,7 @@ sys_id_update_robust, sys_id_init_robust, _ = rls_robust(
     delta=0.01,
     horizon=UPPER_HORIZON,
     lam=0.1,
-    theta0=theta0[0],
+    theta0=theta0,
     jit=False,
     idx_pf=range(theta0.shape[0]))
 
@@ -228,7 +247,7 @@ upper_level.set_alg(
 scenario.update(upper_level=upper_level)
 
 # re-apply initialization
-init_dict['theta'] = [init_dict['theta'] for _ in range(N_MODELS)] # needed for compatibility
+init_dict['theta'] = [init_dict['theta']] * N_MODELS # needed for compatibility
 scenario.set_init(init_dict)
 
 # test again
