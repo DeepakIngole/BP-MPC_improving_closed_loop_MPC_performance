@@ -188,7 +188,7 @@ k = upper_level.param['k']
 
 # create update functions
 parameter_update_gd, parameter_init_gd = gradient_descent(rho=0.0001,eta=0.8,log=True)
-parameter_update_robust, parameter_init_robust = robust_gradient_descent(rho=0.0001,eta=1,n_models=N_MODELS,n_p=p.shape[0],log=False)
+parameter_update_robust, parameter_init_robust = robust_gradient_descent(rho=1e-8,eta=1,n_models=N_MODELS,n_p=p.shape[0],log=False)
 
 # create system identification
 sys_id_update, sys_id_init, _ = rls(
@@ -204,20 +204,26 @@ sys_id_update_robust, sys_id_init_robust, _ = rls_robust(
     dynamics=dyn,
     n_models=N_MODELS,
     R=1,
-    S=3,
+    S=1,
     delta=0.01,
     horizon=UPPER_HORIZON,
-    lam=0.1,
+    lam=1,
     theta0=theta0,
     jit=False,
     idx_pf=range(theta0.shape[0]))
 
 # update upper-level algorithm
+# upper_level.set_alg(
+#     parameter_update=parameter_update_gd,
+#     parameter_init=parameter_init_gd,
+#     sys_id_update=sys_id_update,
+#     sys_id_init=sys_id_init)
+
 upper_level.set_alg(
-    parameter_update=parameter_update_gd,
-    parameter_init=parameter_init_gd,
-    sys_id_update=sys_id_update,
-    sys_id_init=sys_id_init)
+    parameter_update=parameter_update_robust,
+    parameter_init=parameter_init_robust,
+    sys_id_update=sys_id_update_robust,
+    sys_id_init=sys_id_init_robust)
 
 # test derivatives
 # out = tests.derivatives(mod)
@@ -231,28 +237,48 @@ scenario = Scenario(dyn,mpc,upper_level)
 init_dict = {'p':p_init,'pf':theta0,'x': x0,'theta':theta0}
 if NOISE:
     init_dict['w'] = w0
-scenario.set_init(init_dict)
-
-# test closed loop
-sim_list,_,p_best = scenario.closed_loop(options={'use_true_model':False,'max_k':ITERATIONS,'true_theta':np.array(true_theta)})
-
-# modify upper-level algorithm
-upper_level.set_alg(
-    parameter_update=parameter_update_robust,
-    parameter_init=parameter_init_robust,
-    sys_id_update=sys_id_update_robust,
-    sys_id_init=sys_id_init_robust)
-
-# update scenario
-scenario.update(upper_level=upper_level)
-
-# re-apply initialization
 init_dict['theta'] = [init_dict['theta']] * N_MODELS # needed for compatibility
 scenario.set_init(init_dict)
 
-# test again
-simulation_options = {'simulate_parallel_models':True,'use_true_model':False,'max_k':ITERATIONS,'true_theta':np.array(true_theta)}
-sim_list,_,p_best = scenario.closed_loop(options=simulation_options)
+# update options
+sim_options = {'use_true_model':False,'max_k':ITERATIONS,'true_theta':np.array(true_theta),'simulate_parallel_models':True}
+scenario.update_options(sim_options)
+
+# # run first simulation
+# sim, out_dict, qp_failed = scenario.simulate()
+
+# if qp_failed:
+#     raise ValueError('QP failed')
+
+# while True:
+
+#     # get cost
+#     cost,track_cost,cst_viol = scenario.upper_level.cost(sim)
+
+#     # run a single update
+#     sim.j_p = scenario._mapped['j_cost'](sim)
+
+
+# test closed loop
+sim_list,_,p_best = scenario.closed_loop()
+
+# # modify upper-level algorithm
+# upper_level.set_alg(
+#     parameter_update=parameter_update_robust,
+#     parameter_init=parameter_init_robust,
+#     sys_id_update=sys_id_update_robust,
+#     sys_id_init=sys_id_init_robust)
+
+# # update scenario
+# scenario.update(upper_level=upper_level)
+
+# # re-apply initialization
+# init_dict['theta'] = [init_dict['theta']] * N_MODELS # needed for compatibility
+# scenario.set_init(init_dict)
+
+# # test again
+# simulation_options = {'simulate_parallel_models':True,'use_true_model':False,'max_k':ITERATIONS,'true_theta':np.array(true_theta)}
+# sim_list,_,p_best = scenario.closed_loop(options=simulation_options)
 
 # retrieve thetas
 # estimation_error = [ca.norm_2(ca.fabs(elem.psi['theta']-true_theta)) for elem in sim_list]

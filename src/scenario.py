@@ -15,6 +15,7 @@ from typing import Tuple, Optional, Union
 TODO: trajectory optimization should be a separate class!
 TODO: inherit methods related to options and symbolic variables that are shared across classes
 TODO: create multiple consecutive scenarios with the same variables and see what happens
+TODO: make an update option method
 """
 
 class Scenario:
@@ -585,17 +586,8 @@ class Scenario:
         # check if multiple models have been passed
         single_model = False if n_models > 1 else True
 
-        # extract QP for simplicity
-        qp = self.qp
-
-        # extract dimensions for simplicity
-        n = self.dim
-
         # flag to check if QP failed
         qp_failed = False
-
-        # extract dynamics
-        f = self.dyn.f
 
         # extract Jacobians of dynamics
         if single_model:
@@ -606,7 +598,7 @@ class Scenario:
             B = self._mapped['B']
 
         # create simVar for current simulation
-        sim = SimVar(n,n_models)
+        sim = SimVar(self.dim,n_models)
 
         # store p and pf if present
         sim.p = var_in['p'] if 'p' in var_in else None
@@ -615,10 +607,6 @@ class Scenario:
         # set initial conditions
         x_t = var_in['x']
         sim.x.append(x_t)
-
-        # extract parameter indexing
-        idx_qp = self.upper_level.idx['qp']
-        idx_jac = self.upper_level.idx['jac']
 
         # create qp variable. This variable is a "view" on the dictionary var_in.
         # This means that if var_in is modified, then var_in_qp will access the
@@ -629,17 +617,17 @@ class Scenario:
         if self._options['mode'] == 'dense':
 
             # if in dense mode, choose dense solver
-            solver = qp.dense_solve
+            solver = self.qp.dense_solve
         else:
 
             # otherwise, choose sparse solver
-            solver = qp.solve
+            solver = self.qp.solve
         
         # in optimize mode, initialize Jacobians
         if self._options['mode'] == 'optimize':
             # initialize Jacobians
-            j_x_p_t = ca.DM(n['x'],n['p']*n_models) if single_model else np.zeros((n['x'],n['p'],n_models))
-            j_y_p_t = ca.DM(n['y'],n['p']*n_models)
+            j_x_p_t = ca.DM(self.dim['x'],self.dim['p']*n_models) if single_model else np.zeros((self.dim['x'],self.dim['p'],n_models))
+            j_y_p_t = ca.DM(self.dim['y'],self.dim['p']*n_models)
             sim.j_x.append(j_x_p_t)
         else:
             j_x_p_t, j_y_p_t = None, None
@@ -648,33 +636,39 @@ class Scenario:
         if self._options['warmstart_first_qp']:
 
             # get qp parameter
-            p_0 = idx_qp(var_in_qp,0)
+            p_0 = self.upper_level.idx['qp'](var_in_qp,0)
 
             # run QP once to get better initialization
-            lam_t,mu_t,y_all_t = qp.solve(p_0)
+            lam_t,mu_t,y_all_t = self.qp.solve(p_0)
 
             # update y0
-            y0_x = y_all_t[qp.idx['out']['x'][:-n['x']]]
-            y0_u = y_all_t[qp.idx['out']['u']]
+            y0_x = y_all_t[self.qp.idx['out']['x'][:-self.dim['x']]]
+            y0_u = y_all_t[self.qp.idx['out']['u']]
             var_in_qp['y'] = ca.vertcat(x_t,y0_x,y0_u)
 
             if self._options['mode'] == 'optimize':
 
                 # extract jacobian of qp variables
                 if single_model:
-                    j_qp_p_t = qp.j_y_p(lam_t,mu_t,p_0,idx_jac(j_x_p_t.reshape((n['x'],n['p']*n_models)),j_y_p_t,0,n_models))
+                    j_qp_p_t = self.qp.j_y_p(lam_t,mu_t,p_0,self.upper_level.idx['jac'](j_x_p_t.reshape((self.dim['x'],self.dim['p']*n_models)),j_y_p_t,0,n_models))
                 else:
-                    j_qp_p_t = qp.j_y_p(lam_t,mu_t,p_0,idx_jac(j_x_p_t.reshape((n['x'],n['p']*n_models),order='F'),j_y_p_t,0,n_models))
+                    j_qp_p_t = self.qp.j_y_p(lam_t,mu_t,p_0,self.upper_level.idx['jac'](j_x_p_t.reshape((self.dim['x'],self.dim['p']*n_models),order='F'),j_y_p_t,0,n_models))
 
                 # extract portion associated to y
-                j_y_p_t = j_qp_p_t[qp.idx['out']['y'],:]
+                j_y_p_t = j_qp_p_t[self.qp.idx['out']['y'],:]
 
                 # rearrange appropriately (note that the first entry of
                 # y is x0)
                 if single_model:
-                    j_y_p_t = ca.vertcat(j_x_p_t.reshape((n['x'],n['p']*n_models)),j_y_p_t[qp.idx['out']['x'][:-n['x']],:],j_y_p_t[qp.idx['out']['u'],:])
+                    j_y_p_t = ca.vertcat(
+                                j_x_p_t.reshape((self.dim['x'],self.dim['p']*n_models)),
+                                j_y_p_t[self.qp.idx['out']['x'][:-self.dim['x']],:],
+                                j_y_p_t[self.qp.idx['out']['u'],:])
                 else:
-                    j_y_p_t = ca.vertcat(j_x_p_t.reshape((n['x'],n['p']*n_models),order='F'),j_y_p_t[qp.idx['out']['x'][:-n['x']],:],j_y_p_t[qp.idx['out']['u'],:])
+                    j_y_p_t = ca.vertcat(
+                                j_x_p_t.reshape((self.dim['x'],self.dim['p']*n_models),order='F'),
+                                j_y_p_t[self.qp.idx['out']['x'][:-self.dim['x']],:],
+                                j_y_p_t[self.qp.idx['out']['u'],:])
         else:
             lam_t, mu_t, y_all_t = None, None, None
 
@@ -695,14 +689,14 @@ class Scenario:
         qp_ingredients = []
 
         # simulation loop
-        for t in range(n['T']):
+        for t in range(self.dim['T']):
             
             # parameter to pass to the QP
-            p_t = idx_qp(var_in_qp,t)
+            p_t = self.upper_level.idx['qp'](var_in_qp,t)
 
             # check if warm start should be shifted
             if self._options['warmstart_shift'] and t>0:
-                y_all_t = y_all_t[qp.idx['out']['y_shift']]
+                y_all_t = y_all_t[self.qp.idx['out']['y_shift']]
 
             # solve QP
             try:
@@ -721,7 +715,7 @@ class Scenario:
             # if self._options['debug_qp']:
 
             #     # debug current QP
-            #     qp_debug_out = QP.debug(lam,mu,p_t,self._options['epsilon'],self._options['roundoff_qp'],y_all)
+            #     qp_debug_out = self.qp.debug(lam,mu,p_t,self._options['epsilon'],self._options['roundoff_qp'],y_all)
                 
             #     # pack results
             #     qp_debug.append(qp_debug_out)
@@ -729,31 +723,31 @@ class Scenario:
             # if self._options['compute_qp_ingredients']:
 
             #     # compute qp ingredients
-            #     qp_ingredients.append(qp._qp_sparse(p=p_t))
+            #     qp_ingredients.append(self.qp._qp_sparse(p=p_t))
 
             # store optimization variables
-            sim.add_opt_var(lam_t,mu_t,y_all_t[qp.idx['out']['y']],p_t)
+            sim.add_opt_var(lam_t,mu_t,y_all_t[self.qp.idx['out']['y']],p_t)
 
             # get next linearization trajectory
             if self._options['shift_linearization']:
                 # shift input trajectory
-                x_qp_t = y_all_t[qp.idx['out']['x']]
-                u_qp_t = y_all_t[qp.idx['out']['u']]
-                var_in_qp['y'] = ca.vertcat(x_qp_t,u_qp_t[n['u']:],u_qp_t[-n['u']:])
+                x_qp_t = y_all_t[self.qp.idx['out']['x']]
+                u_qp_t = y_all_t[self.qp.idx['out']['u']]
+                var_in_qp['y'] = ca.vertcat(x_qp_t,u_qp_t[self.dim['u']:],u_qp_t[-self.dim['u']:])
             else:
                 # do not shift
-                var_in_qp['y'] = y_all_t[qp.idx['out']['y']]
+                var_in_qp['y'] = y_all_t[self.qp.idx['out']['y']]
             
-            if 'eps' in qp.idx['out']:
+            if 'eps' in self.qp.idx['out']:
 
                 # get slack variables
-                e_t = y_all_t[qp.idx['out']['eps']]
+                e_t = y_all_t[self.qp.idx['out']['eps']]
 
                 # store slack
                 sim.e.append(e_t)
 
             # get first input entry
-            u_t = y_all_t[qp.idx['out']['u0']]
+            u_t = y_all_t[self.qp.idx['out']['u0']]
 
             # store input
             sim.u.append(u_t)
@@ -777,25 +771,25 @@ class Scenario:
                 # get conservative jacobian of optimal solution of QP with respect to parameter
                 # vector p.
                 if single_model:
-                    j_qp_p_t = qp.j_y_p(lam_t,mu_t,p_t,idx_jac(j_x_p_t,j_y_p_t,t))
+                    j_qp_p_t = self.qp.j_y_p(lam_t,mu_t,p_t,self.upper_level.idx['jac'](j_x_p_t,j_y_p_t,t))
                 else:
-                    j_qp_p_t = qp.j_y_p(lam_t,mu_t,p_t)@idx_jac(j_x_p_t.reshape((n['x'],n['p']*n_models),order='F'),j_y_p_t,t,multiplier=n_models)
+                    j_qp_p_t = self.qp.j_y_p(lam_t,mu_t,p_t)@self.upper_level.idx['jac'](j_x_p_t.reshape((self.dim['x'],self.dim['p']*n_models),order='F'),j_y_p_t,t,multiplier=n_models)
 
                 # select entries associated to y
                 if self._options['shift_linearization']:
-                    j_x_qp_p_t = j_qp_p_t[qp.idx['out']['x'],:]
-                    j_u_qp_p_t = j_qp_p_t[qp.idx['out']['u'],:]
-                    j_y_p_t = ca.vertcat(j_x_qp_p_t,j_u_qp_p_t[n['u']:,:],j_u_qp_p_t[-n['u']:,:])
+                    j_x_qp_p_t = j_qp_p_t[self.qp.idx['out']['x'],:]
+                    j_u_qp_p_t = j_qp_p_t[self.qp.idx['out']['u'],:]
+                    j_y_p_t = ca.vertcat(j_x_qp_p_t,j_u_qp_p_t[self.dim['u']:,:],j_u_qp_p_t[-self.dim['u']:,:])
                 else:
-                    j_y_p_t = j_qp_p_t[qp.idx['out']['y'],:]
+                    j_y_p_t = j_qp_p_t[self.qp.idx['out']['y'],:]
 
-                if 'eps' in qp.idx['out']:
+                if 'eps' in self.qp.idx['out']:
                     # select entries associated to slack variables and store them
-                    j_eps_p_t = j_qp_p_t[qp.idx['out']['eps'],:]
+                    j_eps_p_t = j_qp_p_t[self.qp.idx['out']['eps'],:]
                     sim.j_eps.append(j_eps_p_t)
 
                 # select rows corresponding to first input u0
-                j_u0_p_t = j_qp_p_t[qp.idx['out']['u0'],:]
+                j_u0_p_t = j_qp_p_t[self.qp.idx['out']['u0'],:]
 
                 if single_model:
 
@@ -806,11 +800,11 @@ class Scenario:
                     sim.add_sim_jac(j_x_p_t,j_u0_p_t,j_y_p_t)
                 else:
                     j_x_p_t = np.einsum('mnr,ndr->mdr',
-                                        np.array(A.call(var_in_dyn_nom)['A']).reshape((n['x'],n['x'],n_models),order='F'),
+                                        np.array(A.call(var_in_dyn_nom)['A']).reshape((self.dim['x'],self.dim['x'],n_models),order='F'),
                                         j_x_p_t) \
                               + np.einsum('mnr,ndr->mdr',
-                                          np.array(B.call(var_in_dyn_nom)['B']).reshape((n['x'],n['u'],n_models),order='F'),
-                                          np.array(j_u0_p_t).reshape((n['u'],n['p'],n_models),order='F'))
+                                          np.array(B.call(var_in_dyn_nom)['B']).reshape((self.dim['x'],self.dim['u'],n_models),order='F'),
+                                          np.array(j_u0_p_t).reshape((self.dim['u'],self.dim['p'],n_models),order='F'))
                     
                     # store conservative jacobians of state and input
                     sim.add_sim_jac(j_x_p_t,j_u0_p_t,j_y_p_t)
@@ -819,7 +813,7 @@ class Scenario:
                 total_jac_time.append(time.time() - cons_jac_time)
 
             # get next state
-            x_t = f.call(var_in_dyn)['x_next']
+            x_t = self.dyn.f.call(var_in_dyn)['x_next']
 
             # update qp variable dictionary
             var_in_qp['x'] = x_t
@@ -939,9 +933,6 @@ class Scenario:
         # extract maximum number of iterations
         max_k = self._options['max_k'] * batch_size
 
-        # extract cost function
-        cost_f = self.upper_level.cost
-
         # extract gradient of cost function
         j_cost_f = self.upper_level.j_cost if n_models == 1 else self._mapped['j_cost']
 
@@ -1014,7 +1005,7 @@ class Scenario:
             sim_k, qp_data, qp_failed = self._simulate(running_vars,n_models=n_models)
 
             # compute cost and constraint violation
-            cost,track_cost,cst_viol = cost_f(sim_k)
+            cost,track_cost,cst_viol = self.upper_level.cost(sim_k)
             
             # store S into list
             sim.append(sim_k)
@@ -1031,6 +1022,9 @@ class Scenario:
             sim_k.cost = cost
             sim_k.cst = cst_viol
 
+            # run sys_id if needed
+            sys_id_vars = sys_id_vars | self._upper_level.sys_id_update(sim_k,running_vars,k) if sys_id else {}
+
             # if in optimization mode, update parameters
             if self._options['mode'] == 'optimize':
 
@@ -1038,11 +1032,8 @@ class Scenario:
                 if ca.sum1(cst_viol) == 0 and cost < best_cost:
                     best_cost, p_best = cost, p
 
-                # compute gradient of upper-level cost function
-                j_p = j_cost_f(sim_k)
-
-                # store in simvar
-                sim_k.j_p = j_p
+                # compute gradient of upper-level cost function and store in simvar
+                sim_k.j_p = j_cost_f(sim_k)
 
                 # on first iteration, initialize psi
                 if k == 0:
@@ -1055,10 +1046,7 @@ class Scenario:
                 running_vars = running_vars | self.upper_level.parameter_update(sim_k,k)
                 
             else:
-                j_p = np.zeros((2,1)) # I need a vector for compatibility with the printout
-
-            # run sys_id if needed
-            sys_id_vars = sys_id_vars | self._upper_level.sys_id_update(sim_k,running_vars,k) if sys_id else {}
+                sim_k.j_p = np.zeros((2,1)) # I need a vector for compatibility with the printout
 
             if save_memory:
                 sim_k.save_memory()
@@ -1068,14 +1056,14 @@ class Scenario:
                 case 0:
                     pass
                 case 1:
-                    j_to_print = ca.DM(np.linalg.norm(j_p,axis=0)) if n_models == 1 else ca.DM(np.mean(np.linalg.norm(j_p,axis=0)))
+                    j_to_print = ca.DM(np.linalg.norm(sim_k.j_p,axis=0)) if n_models == 1 else ca.DM(np.mean(np.linalg.norm(sim_k.j_p,axis=0)))
 
                     to_print = f"Iteration: {k}, cost: {track_cost}, J: {j_to_print}, e : {ca.sum1(ca.fmax(cst_viol,0))}"
 
                     if sys_id and self.options['true_theta'] is not np.zeros(1):
 
                         # compute estimation error
-                        est_error = np.linalg.norm(running_vars['theta']-self.options['true_theta'])
+                        est_error = np.mean(np.linalg.norm(running_vars['theta']-self.options['true_theta'],axis=1))
 
                         to_print += f', Current estimation error: {est_error}'
                     
@@ -1113,3 +1101,12 @@ class Scenario:
         comp_time['iter'] = total_iter_time
 
         return sim, comp_time, p_best
+    
+    def update_options(self,options:dict) -> None:
+        """
+        Updates the options for the simulation.
+
+        Args:
+            options (dict): Dictionary containing the new options to be set.
+        """
+        self._options.update(options)
