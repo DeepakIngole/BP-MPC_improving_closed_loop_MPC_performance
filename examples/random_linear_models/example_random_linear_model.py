@@ -171,6 +171,10 @@ upper_level = UpperLevel(p=p,pf=pf,horizon=UPPER_HORIZON,mpc=mpc)
 A = dyn.A_nom(ca.DM(n_x,1),ca.DM(n_u,1),theta0)
 B = dyn.B_nom(ca.DM(n_x,1),ca.DM(n_u,1),theta0)
 
+# verify that A and B match the matrices computed above
+assert ca.mmax(ca.fabs(ca.DM(A-A_uncertain)))==0, 'Nominal matrix A is incorrect.'
+assert ca.mmax(ca.fabs(ca.DM(B-B_uncertain)))==0, 'Nominal matrix B is incorrect.'
+
 # compute terminal cost initialization
 p_init = ca.vertcat(dare2param(A,B,Q_true,R_true),1e-1)#ca.vertcat(ca.DM.ones(p.shape[0]-1,1)*1e-3,1)#
 
