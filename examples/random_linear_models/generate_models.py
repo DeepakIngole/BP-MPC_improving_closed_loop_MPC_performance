@@ -1,8 +1,8 @@
 import sys, os
-from datetime import datetime
 import casadi as ca
 import numpy as np
 from typing import Tuple,List
+from datetime import datetime
 import pickle
 
 # add root to python path
@@ -10,6 +10,30 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')
 
 import examples.dynamics.random_linear as random_linear
 from utils.poles_to_linear_sys import poles_to_linear_sys
+
+# SAMPLING TIME FOR DYNAMICS
+TS = 0.15
+
+# state dimension
+NX = 4
+
+# magnitude of (continuous time) poles
+POLE_RANGE = [-5,1]
+
+# horizons
+HORIZON = 20
+
+# uncertainty on poles
+POLE_UNCERTAINTY = 1
+
+# how spread out the initial condition is
+X0_MAG = 2
+
+# decide whether to include noise or not
+NOISE_MAG = 0.1
+
+# number of models used in robust GD
+N_MODELS = 10
 
 def multiple(
         sampling_time:float=0.15,
@@ -19,15 +43,14 @@ def multiple(
         pole_range:Tuple[float,float]=[-5,1],
         pole_uncertainty:float=1,
         x0_mag = 2,
-        noise_mag:float = 0.0
+        noise_mag:float = 0.0,
     ) -> List[dict]:
     """
-    Generates and saves a list of random linear models with specified properties.
+    Generates a list of random linear models with specified properties.
 
     This function creates `n_models` random linear models, each with `n_x` states, sampled at the specified `sampling_time`.
     The models are generated with random poles within the given `pole_range` and optional pole uncertainty. The initial state
-    dispersion and process noise magnitude can also be specified. The generated models are saved to a pickle file with a
-    filename that encodes the main parameters and the current timestamp.
+    dispersion and process noise magnitude can also be specified.
 
     Args:
         sampling_time (float, optional): Sampling time for the models. Must be positive. Default is 0.15.
@@ -64,22 +87,17 @@ def multiple(
 
     # generate n_models random linear models
     for i in range(n_models):
-        model = single(sampling_time,n_x,noise_mag,pole_range,horizon,pole_uncertainty)
+        model = single(
+                sampling_time=sampling_time,
+                n_x=n_x,
+                noise_mag=noise_mag,
+                pole_range=pole_range,
+                horizon=horizon,
+                pole_uncertainty=pole_uncertainty
+            )
         model_list.append(model)
 
-    # get current date and time
-    formatted_date = datetime.now().strftime("%Y_%m_%d_%H_%M_%S")
-
-    # create file name containint NX, n_models and POLE_MAG and whether or not NOISE is present
-    if noise_mag > 0:
-        file_name = './.models/' + formatted_date + f'_random_linear_models_NX_{n_x}_POLE_MAG_{pole_range[0]}_to_{pole_range[1]}_N_MODELS_{n_models}_NOISE.pkl'
-    else:
-        file_name = './.models/' + formatted_date + f'_random_linear_models_NX_{n_x}_POLE_MAG_{pole_range[0]}_to_{pole_range[1]}_N_MODELS_{n_models}.pkl'
-
-    # dump model to file
-    with open(file_name, 'wb') as f:
-        pickle.dump(model_list, f)
-
+    return model_list
 
 # generate several models and store
 def single(
@@ -158,3 +176,32 @@ def single(
         'A_uncertain': A_uncertain,
         'B_uncertain': B_uncertain,
     }
+
+if __name__ == "__main__":
+
+    # check if .models directory exists
+    if not os.path.exists('./.models/'):
+        os.makedirs('./.models/')
+    
+    # get randomly generated linear models
+    model_list = multiple(
+        sampling_time=TS,
+        n_x=NX,
+        horizon=HORIZON,
+        n_models=N_MODELS,
+        pole_range=POLE_RANGE,
+        pole_uncertainty=POLE_UNCERTAINTY
+    )
+
+    # get current date and time
+    formatted_date = datetime.now().strftime("%Y_%m_%d_%H_%M_%S")
+
+    # create file name containint NX, n_modelN_MODELSs and POLE_MAG and whether or not NOISE is present
+    if NOISE_MAG > 0:
+        file_name = './.models/' + formatted_date + f'_random_linear_models_NX_{NX}_POLE_MAG_{POLE_RANGE[0]}_to_{POLE_RANGE[1]}_N_MODELS_{N_MODELS}_NOISE.pkl'
+    else:
+        file_name = './.models/' + formatted_date + f'_random_linear_models_NX_{NX}_POLE_MAG_{POLE_RANGE[0]}_to_{POLE_RANGE[1]}_N_MODELS_{N_MODELS}.pkl'
+
+    # dump model to file
+    with open(file_name, 'wb') as f:
+        pickle.dump(model_list, f)
