@@ -6,7 +6,7 @@ from typing import Tuple
 def dynamics(
         Ts:float=0.1,
         n_x:int=2,
-        pole_range:Tuple[float,float]=[0.5,1.2],
+        pole_mag:Tuple[float,float]=[0.5,1.2],
         use_theta:bool=True,
         use_w:bool=True,
         verbose=False
@@ -16,7 +16,7 @@ def dynamics(
     Args:
         Ts (float, optional): Sampling time for discretization. Defaults to 0.1.
         n_x (int, optional): Number of states. Defaults to 2.
-        pole_range (Tuple[float, float], optional): Range [min, max] for randomly generated continuous-time poles. Defaults to [0.5, 1.2].
+        pole_mag (Tuple[float, float], optional): Range [min, max] for randomly generated continuous-time poles. Defaults to [0.5, 1.2].
         use_theta (bool, optional): If True, creates symbolic parameters for the nominal model (A, B matrices). Defaults to True.
         use_w (bool, optional): If True, includes process noise as a symbolic variable. Defaults to True.
         verbose (bool, optional): If True, prints generated poles and eigenvalues. Defaults to False.
@@ -31,7 +31,7 @@ def dynamics(
         true_theta (ca.DM): True parameter vector (flattened Jacobian of x_next w.r.t. [x; u]).
         poles (np.ndarray): Array of generated continuous-time poles.
     Raises:
-        AssertionError: If pole_range is not in the form [min, max] with min <= max.
+        AssertionError: If pole_mag is not in the form [min, max] with min <= max.
     Note:
         Requires CasADi (as `ca`) and NumPy (as `np`). The helper function `poles_to_linear_sys` must be defined elsewhere.
     """
@@ -43,10 +43,10 @@ def dynamics(
     x = ca.SX.sym('x',n_x,1)
     u = ca.SX.sym('u',n_u,1)
 
-    assert pole_range[0] <= pole_range[1], 'Pass pole_range as pole_range = [pole_min, pole_max] with pole_min <= pole_max.'
+    assert pole_mag[0] <= pole_mag[1], 'Pass pole_mag as pole_mag = [pole_min, pole_max] with pole_min <= pole_max.'
 
     # generate random continuous-time poles
-    poles = np.random.rand(n_x)*(pole_range[1]-pole_range[0]) + np.ones(n_x)*pole_range[0]
+    poles = np.random.rand(n_x)*(pole_mag[1]-pole_mag[0]) + np.ones(n_x)*pole_mag[0]
 
     # generate random discrete-time system
     A,B,eig_A = poles_to_linear_sys(poles=poles,Ts=Ts)

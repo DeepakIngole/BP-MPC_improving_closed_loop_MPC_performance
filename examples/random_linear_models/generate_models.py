@@ -121,7 +121,7 @@ def single(
     use_noise = noise_mag > 0
 
     # create dictionary with parameters of cart pendulum
-    dyn_dict,true_theta,true_poles = random_linear.dynamics(Ts=sampling_time,n_x=n_x,use_w=use_noise,pole_range=pole_range)
+    dyn_dict,true_theta,true_poles = random_linear.dynamics(Ts=sampling_time,n_x=n_x,use_w=use_noise,pole_mag=pole_range)
 
     # set initial conditions
     x0 = ca.DM.ones(n_x,1)
