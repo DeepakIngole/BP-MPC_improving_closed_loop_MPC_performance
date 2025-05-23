@@ -1,6 +1,6 @@
 import casadi as ca
 import numpy as np
-from utils.poles_to_linear_sys import poles_to_linear_sys
+from utils.linear import poles_to_linear_sys
 from typing import Tuple
 
 def dynamics(

@@ -8,7 +8,7 @@ import pickle
 # add root to python path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')))
 
-from utils.poles_to_linear_sys import poles_to_linear_sys
+from utils.linear import poles_to_linear_sys
 from examples.dynamics import random_linear
 
 # SAMPLING TIME FOR DYNAMICS
@@ -33,9 +33,9 @@ X0_MAG = 2
 NOISE_MAG = 0.1
 
 # number of models used in robust GD
-N_MODELS = 10
+N_MODELS = 100
 
-def multiple(
+def generate_multiple(
         sampling_time:float=0.15,
         n_x:int=4,
         horizon:int=20,
@@ -87,7 +87,7 @@ def multiple(
 
     # generate n_models random linear models
     for i in range(n_models):
-        model = single(
+        model = generate_single(
                 sampling_time=sampling_time,
                 n_x=n_x,
                 noise_mag=noise_mag,
@@ -100,7 +100,7 @@ def multiple(
     return model_list
 
 # generate several models and store
-def single(
+def generate_single(
         sampling_time:float=0.15,
         n_x:int=4,
         horizon:int=20,
@@ -150,10 +150,10 @@ def single(
     func_in_names_nom = [ key for key in ['x','u','theta'] if key in dyn_dict ]
 
     # form x_next function
-    f = ca.Function('f', func_in, [dyn_dict['x_next']], func_in_names, ['x_next'])
+    f = ca.Function('x_next', func_in, [dyn_dict['x_next']], func_in_names, ['x_next'])
 
     # form x_next_nom function
-    f_nom = ca.Function('f_nom', func_in_nom, [dyn_dict['x_next_nom']], func_in_names_nom, ['x_next_nom'])
+    f_nom = ca.Function('x_next_nom', func_in_nom, [dyn_dict['x_next_nom']], func_in_names_nom, ['x_next_nom'])
 
     # set initial conditions
     x0 = ca.DM.ones(n_x,1)
@@ -177,22 +177,32 @@ def single(
     else:
 
         w0 = None
+
+    # save dimensions
+    dim = {}
+    dim['x'] = n_x
+    dim['u'] = 1
+    dim['w'] = w0.shape[0] if use_noise else 0
+    dim['horizon'] = horizon
+    dim['Ts'] = sampling_time
+    dim['theta'] = theta0.shape[0]
     
     # form output dictionary
-    dyn_dict = {
+    out_dict = {
         'f': f,
         'f_nom':f_nom,
         'theta_uncertain': theta0,
         'theta_true': true_theta,
         'x0': x0,
         'w0': w0,
-        'poles_true': true_poles,
-        'poles_uncertain': poles_uncertain,
+        'poles_true': ca.DM(true_poles),
+        'poles_uncertain': ca.DM(poles_uncertain),
         'A_uncertain': ca.DM(A_uncertain),
         'B_uncertain': ca.DM(B_uncertain),
+        'dim':dim
     }
 
-    return dyn_dict
+    return out_dict
 
 if __name__ == "__main__":
 
@@ -201,7 +211,7 @@ if __name__ == "__main__":
         os.makedirs('./.models/')
     
     # get randomly generated linear models
-    model_list = multiple(
+    model_list = generate_multiple(
         sampling_time=TS,
         n_x=NX,
         horizon=HORIZON,
