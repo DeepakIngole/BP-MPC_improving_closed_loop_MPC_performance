@@ -8,8 +8,8 @@ import pickle
 # add root to python path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')))
 
-import examples.dynamics.random_linear as random_linear
 from utils.poles_to_linear_sys import poles_to_linear_sys
+from examples.dynamics import random_linear
 
 # SAMPLING TIME FOR DYNAMICS
 TS = 0.15
@@ -141,6 +141,20 @@ def single(
     # create dictionary with parameters of cart pendulum
     dyn_dict,true_theta,true_poles = random_linear.dynamics(Ts=sampling_time,n_x=n_x,use_w=use_noise,pole_mag=pole_range)
 
+    # get inputs to x_next
+    func_in = [ dyn_dict[key] for key in ['x','u','w'] if key in dyn_dict ]
+    func_in_names = [ key for key in ['x','u','w'] if key in dyn_dict ]
+
+    # get inputs to x_next_nom
+    func_in_nom = [ dyn_dict[key] for key in ['x','u','theta'] if key in dyn_dict ]
+    func_in_names_nom = [ key for key in ['x','u','theta'] if key in dyn_dict ]
+
+    # form x_next function
+    f = ca.Function('f', func_in, [dyn_dict['x_next']], func_in_names, ['x_next'])
+
+    # form x_next_nom function
+    f_nom = ca.Function('f_nom', func_in_nom, [dyn_dict['x_next_nom']], func_in_names_nom, ['x_next_nom'])
+
     # set initial conditions
     x0 = ca.DM.ones(n_x,1)
     # x0 = ca.DM( X0_MAG * (np.ones((n_x,1)) + 2*np.random.rand(n_x,1)) )
@@ -166,16 +180,19 @@ def single(
     
     # form output dictionary
     dyn_dict = {
-        'dyn_dict': dyn_dict,
+        'f': f,
+        'f_nom':f_nom,
         'theta_uncertain': theta0,
         'theta_true': true_theta,
         'x0': x0,
         'w0': w0,
         'poles_true': true_poles,
         'poles_uncertain': poles_uncertain,
-        'A_uncertain': A_uncertain,
-        'B_uncertain': B_uncertain,
+        'A_uncertain': ca.DM(A_uncertain),
+        'B_uncertain': ca.DM(B_uncertain),
     }
+
+    return dyn_dict
 
 if __name__ == "__main__":
 

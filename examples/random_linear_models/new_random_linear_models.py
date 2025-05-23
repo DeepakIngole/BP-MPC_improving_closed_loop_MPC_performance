@@ -1,9 +1,12 @@
 import sys, os
 import casadi as ca
 import numpy as np
+from glob import glob
+from datetime import datetime
+import pickle
 
 # add root to python path
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')))
 
 from src.scenario import Scenario
 from src.dynamics import Dynamics
@@ -28,11 +31,28 @@ COMPILE_QP_SPARSE = False
 COMPILE_QP_DENSE = False
 COMPILE_JAC = False
 
-# sample new models or load previous ones
-SAMPLE_NEW_MODELS = True
+# load latest model from .models directory
+all_models = glob("./.models/*.pkl")
 
+# Extract the datetime from the string
+datetimes = []
+for s in all_models:
+    # Extract the datetime string using split
+    parts = s.split('/')
+    date_str = parts[-1].split('_random')[0]  # '2025_05_23_13_15_47'
+    dt = datetime.strptime(date_str, '%Y_%m_%d_%H_%M_%S')
+    datetimes.append(dt)
 
+# Get the index of the most recent datetime
+most_recent_index = max(range(len(datetimes)), key=lambda i: datetimes[i])
+print("Index of most recent file:", most_recent_index)
 
+# load using pickle
+with open(all_models[most_recent_index], 'rb') as f:
+    model_list = pickle.load(f)
+
+# loop through all models
+for i,model in enumerate(model_list):
 
 
 
