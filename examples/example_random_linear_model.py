@@ -30,22 +30,32 @@ COMPILE_QP_DENSE = False
 COMPILE_JAC = False
 
 # SAMPLING TIME FOR DYNAMICS
-TS = 0.3
+TS = 0.15
 
 # state dimension
 NX = 4
 
+# solver
+SOLVER = 'daqp'
+
 # magnitude of (continuous time) poles
-POLE_MAG = [-2,1]
+POLE_MAG = [-5,1]
 
 # horizons
-UPPER_HORIZON = 25
+UPPER_HORIZON = 20
 MPC_HORIZON = 10
 ITERATIONS = 20
 
 # penalties on constraint violation (closed-loop)
-L2_PENALTY = 10
-L1_PENALTY = 15
+L2_PENALTY = 1000
+L1_PENALTY = 1000
+
+# rho
+RHO = 1e-4
+
+# penalties on constraint violation (mpc)
+MPC_S_QUAD = 15
+MPC_S_LIN = 25
 
 # uncertainty on theta
 THETA_UNCERTAINTY_RANGE = 1
@@ -55,7 +65,7 @@ X0_MAG = 2
 
 # decide whether to include noise or not
 NOISE = True
-NOISE_MAG = 0.5
+NOISE_MAG = 0.1
 
 # number of models used in robust GD
 N_MODELS = 10
@@ -105,7 +115,7 @@ R_true = 1
 # constraints are simple bounds on state and input
 x_max = 5*ca.DM.ones(n_x,1)
 x_min = -x_max
-u_max = 1.5
+u_max = 1
 u_min = -u_max
 
 # parameter = terminal state cost and input cost
@@ -129,7 +139,7 @@ Qn = param2terminal_cost(c_q) + 0.01*ca.SX.eye(n_x)
 Qx.append(Qn)
 
 # add to mpc dictionary
-cost = {'Qx': Qx, 'Ru':Ru, 's_quad':5, 's_lin':5}
+cost = {'Qx': Qx, 'Ru':Ru, 's_quad':MPC_S_QUAD, 's_lin':MPC_S_LIN}
 # cost = {'Qx': Qx, 'Ru':Ru}
 
 # turn bounds into polyhedral constraints
@@ -146,7 +156,7 @@ ing = Ingredients(horizon=MPC_HORIZON,dynamics=dyn,cost=cost,constraints=cst)
 qp_options = {'compile_qp_sparse':COMPILE_QP_SPARSE,
               'compile_qp_dense':COMPILE_QP_DENSE,
               'compile_jac':COMPILE_JAC,
-              'solver':'daqp'}
+              'solver':SOLVER}
 
 # create MPC
 mpc = QP(ingredients=ing,p=p,pf=pf,options=qp_options)
@@ -162,7 +172,7 @@ A = dyn.A_nom(ca.DM(n_x,1),ca.DM(n_u,1),theta0)
 B = dyn.B_nom(ca.DM(n_x,1),ca.DM(n_u,1),theta0)
 
 # compute terminal cost initialization
-p_init = ca.vertcat(ca.DM.ones(p.shape[0]-1,1)*1e-3,1)#ca.vertcat(dare2param(A,B,Q_true,R_true),1e-1)
+p_init = ca.vertcat(dare2param(A,B,Q_true,R_true),1e-1)#ca.vertcat(ca.DM.ones(p.shape[0]-1,1)*1e-3,1)#
 
 # extract closed-loop variables for upper level
 x_cl = ca.vec(upper_level.param['x_cl'])
@@ -188,7 +198,7 @@ k = upper_level.param['k']
 
 # create update functions
 parameter_update_gd, parameter_init_gd = gradient_descent(rho=0.0001,eta=0.8,log=True)
-parameter_update_robust, parameter_init_robust = robust_gradient_descent(rho=1e-8,eta=1,n_models=N_MODELS,n_p=p.shape[0],log=False)
+parameter_update_robust, parameter_init_robust = robust_gradient_descent(rho=RHO,eta=0.51,n_models=N_MODELS,n_p=p.shape[0],log=True)
 
 # create system identification
 sys_id_update, sys_id_init, _ = rls(
@@ -207,7 +217,7 @@ sys_id_update_robust, sys_id_init_robust, _ = rls_robust(
     S=1,
     delta=0.01,
     horizon=UPPER_HORIZON,
-    lam=1,
+    lam=3,
     theta0=theta0,
     jit=False,
     idx_pf=range(theta0.shape[0]))
