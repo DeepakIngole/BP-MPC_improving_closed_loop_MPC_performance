@@ -1,5 +1,5 @@
 from __future__ import annotations
-from copy import copy
+from copy import deepcopy
 from typing import Optional,Union
 
 class Options:
@@ -24,15 +24,22 @@ class Options:
         self._allowed_options = allowed_options.copy()
         self.update(default_options)
 
-    def __add__(self,other:Options) -> Options:
+    def __add__(self,other:Union[Options,dict]) -> Options:
 
-        assert isinstance(other,Options), 'You can only sum two options objects'
+        # create a deeep copy of the current object
+        out = deepcopy(self)
 
-        # create a copy of the current Object
-        out = copy(self)
+        # if the user sums two options, then combine values as well as allowed options
+        if isinstance(other,Options):
+            out._allowed_options = out._allowed_options | other._allowed_options
 
-        # add other object
-        out._allowed_options = out._allowed_options | other._allowed_options
+        # otherwise, ensure that "other" is a dictionary whose keys are contained
+        # in the current allowed_options
+        else:
+            assert isinstance(other,dict), 'Either pass a dictionary or an options object.'
+            assert not set(other.keys()) - set(self._allowed_options.keys()), 'You passed illegal options.'
+        
+        # either way, update
         out.update(other)
 
         return out

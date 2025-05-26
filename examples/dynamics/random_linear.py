@@ -1,10 +1,40 @@
 import casadi as ca
 import numpy as np
-from scipy.linalg import expm,eig
+from utils.linear import poles_to_linear_sys
+from typing import Tuple
 
-def dynamics(Ts:float=0.1,n_x:int=2,pole_mag:list=[0.5,1.2],use_theta:bool=True,use_w:bool=True) -> dict:
-
-    assert pole_mag[1] >= pole_mag[0], 'Pole magnitude bounds should be given as [mag_min, mag_max] with mag_min <= mag_max.'
+def dynamics(
+        Ts:float=0.1,
+        n_x:int=2,
+        pole_mag:Tuple[float,float]=[0.5,1.2],
+        use_theta:bool=True,
+        use_w:bool=True,
+        verbose=False
+    ) -> dict:
+    """
+    Generates a random discrete-time linear system with configurable state dimension, pole range, and optional symbolic parameters.
+    Args:
+        Ts (float, optional): Sampling time for discretization. Defaults to 0.1.
+        n_x (int, optional): Number of states. Defaults to 2.
+        pole_mag (Tuple[float, float], optional): Range [min, max] for randomly generated continuous-time poles. Defaults to [0.5, 1.2].
+        use_theta (bool, optional): If True, creates symbolic parameters for the nominal model (A, B matrices). Defaults to True.
+        use_w (bool, optional): If True, includes process noise as a symbolic variable. Defaults to True.
+        verbose (bool, optional): If True, prints generated poles and eigenvalues. Defaults to False.
+    Returns:
+        out (dict): Dictionary containing symbolic variables and system dynamics:
+            - 'x': State symbolic variable (n_x x 1).
+            - 'u': Input symbolic variable (1 x 1).
+            - 'theta': (optional) Symbolic parameter vector for nominal model (if use_theta=True).
+            - 'w': (optional) Symbolic process noise (if use_w=True).
+            - 'x_next': Symbolic expression for successor state (true dynamics).
+            - 'x_next_nom': Symbolic expression for nominal successor state.
+        true_theta (ca.DM): True parameter vector (flattened Jacobian of x_next w.r.t. [x; u]).
+        poles (np.ndarray): Array of generated continuous-time poles.
+    Raises:
+        AssertionError: If pole_mag is not in the form [min, max] with min <= max.
+    Note:
+        Requires CasADi (as `ca`) and NumPy (as `np`). The helper function `poles_to_linear_sys` must be defined elsewhere.
+    """
 
     # always one input
     n_u = 1
@@ -13,38 +43,17 @@ def dynamics(Ts:float=0.1,n_x:int=2,pole_mag:list=[0.5,1.2],use_theta:bool=True,
     x = ca.SX.sym('x',n_x,1)
     u = ca.SX.sym('u',n_u,1)
 
+    assert pole_mag[0] <= pole_mag[1], 'Pass pole_mag as pole_mag = [pole_min, pole_max] with pole_min <= pole_max.'
+
     # generate random continuous-time poles
     poles = np.random.rand(n_x)*(pole_mag[1]-pole_mag[0]) + np.ones(n_x)*pole_mag[0]
-    
-    # put ones in the off-diagonal of A
-    A_cont = np.diag(np.ones(n_x-1),k=1)
 
-    # substitute last row of A with characteristic polynomial
-    A_cont[-1,:] = -np.array(np.flip(np.poly(poles)[1:]))
+    # generate random discrete-time system
+    A,B,eig_A = poles_to_linear_sys(poles=poles,Ts=Ts)
 
-    # B matrix in controllable canonical form
-    B_cont = ca.vcat([ca.DM(n_x-1,1),1])
-
-    # check eigenvalues of A_cont
-    eig_a_cont = eig(A_cont)[0]
-    
-    # check that poles match
-    assert np.allclose(np.sort(eig_a_cont),np.sort(poles),rtol=1e-12), 'Poles do not match'
-
-    # # Euler
-    # A_euler = ca.SX.eye(n_x) + Ts*ca.SX(A_cont)
-    # B_euler = Ts*B_cont
-
-    # # second order
-    # A_second_order = ca.SX.eye(n_x) + Ts*ca.SX(A_cont) + Ts**2/2*ca.SX(A_cont@A_cont)
-
-    # discretize
-    A = ca.cse(ca.sparsify(ca.SX(expm(Ts*A_cont))))
-    B = ca.cse(ca.sparsify(ca.SX(ca.pinv(A_cont)@(A-ca.SX.eye(n_x))@B_cont)))
-
-    # check eigenvalues of A
-    eig_a = eig(expm(Ts*A_cont))[0]
-    print(f'Eigenvalues of A: {np.absolute(eig_a)}')
+    if verbose:
+        print(f'Generated poles: {poles}')
+        print(f'Generated eigenvalues: {eig_A}')
 
     # create output dictionary
     out = {'x':x, 'u':u}
@@ -88,4 +97,4 @@ def dynamics(Ts:float=0.1,n_x:int=2,pole_mag:list=[0.5,1.2],use_theta:bool=True,
     out['x_next'] = x_next
     out['x_next_nom'] = x_next_nom
 
-    return out,true_theta
+    return out,true_theta,poles
