@@ -25,14 +25,14 @@ class Scenario:
                                'gd_type': ['gd', 'sgd'], 'figures': bool, 'random_sampling': bool, 'debug_qp': bool,
                                'compute_qp_ingredients': bool, 'verbosity': [0, 1, 2], 'max_k': int,
                                'use_true_model': bool, 'simulate_parallel_models': bool,
-                               'compile_mapped_dynamics':bool,'true_theta':np.ndarray}
+                               'compile_mapped_dynamics':bool,'true_theta':np.ndarray,'save_memory':bool}
 
     _OPTIONS_DEFAULT_VALUES = {'shift_linearization': True, 'warmstart_first_qp': True, 'warmstart_shift': True,
                                'epsilon': 1e-6, 'roundoff_qp': 10, 'mode': 'optimize', 'gd_type': 'gd',
                                'figures': False, 'random_sampling': False, 'debug_qp': False,
                                'compute_qp_ingredients': False, 'verbosity': 1, 'max_k': 200,
                                'use_true_model': True, 'simulate_parallel_models': False,
-                               'compile_mapped_dynamics':False,'true_theta':np.zeros(1)}
+                               'compile_mapped_dynamics':False,'true_theta':np.zeros(1),'save_memory':False}
 
     @typechecked
     def __init__(self,dyn:Dynamics,mpc:QP,upper_level:UpperLevel):
@@ -944,13 +944,6 @@ class Scenario:
         # list containing all Jacobian times
         total_jac_time = []
 
-        # if number of iterations is too large, do not store derivatives
-        # to save memory
-        if max_k > 7500:
-            save_memory = True
-        else:
-            save_memory = False
-
         # initialize best cost to infinity, and best iteration index to none
         best_cost = ca.inf
         p_best = p
@@ -1044,7 +1037,7 @@ class Scenario:
             else:
                 sim_k.j_p = np.zeros((2,1)) # I need a vector for compatibility with the printout
 
-            if save_memory:
+            if sim_options['save_memory']:
                 sim_k.save_memory()
 
             # printout
@@ -1096,7 +1089,7 @@ class Scenario:
         comp_time['jac'] = total_jac_time
         comp_time['iter'] = total_iter_time
 
-        return sim, comp_time, p_best
+        return sim, comp_time, p_best, qp_failed
     
     def update_options(self,options:dict) -> None:
         """

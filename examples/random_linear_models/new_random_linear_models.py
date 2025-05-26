@@ -6,6 +6,8 @@ import numpy as np
 from glob import glob
 from datetime import datetime
 import pickle
+from prettytable import PrettyTable
+
 
 # add root to python path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')))
@@ -19,6 +21,16 @@ from utils.cost_utils import quad_cost_and_bounds,bound2poly,param2terminal_cost
 from src.upper_level import UpperLevel
 from utils.parameter_update import robust_gradient_descent, gradient_descent
 from utils.sys_id import rls, rls_robust
+
+import sys
+
+def clear_last_lines(n):
+    for _ in range(n):
+        # Move cursor up one line
+        sys.stdout.write('\x1b[1A')  # ANSI escape code to move cursor up
+        # Clear the line
+        sys.stdout.write('\x1b[2K')  # ANSI escape code to clear the line
+    sys.stdout.flush()
 
 # cleanup jit files
 cleanup()
@@ -84,6 +96,12 @@ with open(all_models[most_recent_index], 'rb') as f:
 #### LOOP THROUGH ALL MODELS ---------------------------------------------------------------------
 
 #TODO: generation of the ingredients can be done only once
+
+ALL_MODELS = []
+
+# initialize pretty table
+table = PrettyTable()
+table.field_names = ["MODEL", "Constraint violation (first-last)", "Cost (first-last-increment)", "QP failed"]
 
 # loop through all models
 for i,model in enumerate(model_list):
@@ -259,22 +277,48 @@ for i,model in enumerate(model_list):
     # scenario.set_init(init_dict)
 
     # update options
-    sim_options = {'use_true_model':False,'max_k':ITERATIONS,'true_theta':np.array(model['theta_true']),'verbosity':0}
+    sim_options = {'save_memory':True,'use_true_model':False,'max_k':ITERATIONS,'true_theta':np.array(model['theta_true']),'verbosity':0}
     if MODE == 'robust':
         sim_options['simulate_parallel_models'] = True
     # scenario.update_options(sim_options)
 
     # run first simulation
-    _, _, qp_failed = scenario.simulate(options=sim_options,init=init_dict)
+    _, _, first_qp_failed = scenario.simulate(options=sim_options,init=init_dict)
 
-    if qp_failed:
-        raise ValueError('QP failed')
+    if not first_qp_failed:
     
-    # test closed loop
-    sim_list,_,p_best = scenario.closed_loop(options=sim_options,init=init_dict)
+        # test closed loop
+        sim_list,_,p_best,qp_failed_closed_loop = scenario.closed_loop(options=sim_options,init=init_dict)
 
-    # printout
-    print(f'Done {i} out of {len(model_list)}')
+        # compute cost and constraint violation improvement
+        cost = [sim.cost for sim in sim_list]
+        cst = [sim.cst for sim in sim_list]
+
+    if first_qp_failed:
+        qp_failed = 'First'
+    elif qp_failed_closed_loop:
+        qp_failed = 'Sim'
+    else:
+        qp_failed = 'Never'
+
+    # add to table
+    table.add_row([i, f'{ca.sum1(ca.fmax(cst[0],0))} | {ca.sum1(ca.fmax(cst[-1],0))}', f'{cost[0]} | {cost[-1]} | {cost[-1]-cost[0]}', qp_failed])
+
+    # clear previous rows
+    if i > 0:
+        clear_last_lines(4+i)
+    
+    # Print the table
+    print(table)
+
+# save table with results
+
+
+# all_models[most_recent_index]
+
+# # dump model to file
+# with open(file_name, 'wb') as f:
+#     pickle.dump(model_list, f)
 
 # while True:
 
