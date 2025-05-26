@@ -35,7 +35,7 @@ def test_parallel_derivatives(mpc_horizon=None,upper_horizon=None,n_models=5,tol
     ingredients = Ingredients(horizon=mpc_horizon,cost=cost,constraints=constraints,dynamics=dynamics)
 
     # create MPC
-    mpc = QP(ingredients=ingredients,p=p,pf=theta,options={'solver':'daqp'})
+    mpc = QP(ingredients=ingredients,p=p,pf=theta)
 
     # create sample upper level
     upper_level = sample_upper_level(p=p,pf=theta,mpc=mpc,horizon=upper_horizon)
@@ -55,7 +55,6 @@ def test_parallel_derivatives(mpc_horizon=None,upper_horizon=None,n_models=5,tol
 
     # simulate with initial parameter
     sim,*_ = scenario.simulate(options={'simulate_parallel_models':True})
-    # sim,*_ = scenario.simulate()
 
     # preallocate list of derivatives
     j_x = []

@@ -274,13 +274,11 @@ for i,model in enumerate(model_list):
     if use_noise:
         init_dict['w'] = model['w0']
     init_dict['theta'] = [init_dict['theta']] * N_MODELS # needed for compatibility
-    # scenario.set_init(init_dict)
 
     # update options
     sim_options = {'save_memory':True,'use_true_model':False,'max_k':ITERATIONS,'true_theta':np.array(model['theta_true']),'verbosity':0}
     if MODE == 'robust':
         sim_options['simulate_parallel_models'] = True
-    # scenario.update_options(sim_options)
 
     # run first simulation
     _, _, first_qp_failed = scenario.simulate(options=sim_options,init=init_dict)
