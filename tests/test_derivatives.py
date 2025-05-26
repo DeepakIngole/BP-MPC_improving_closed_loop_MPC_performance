@@ -1,101 +1,96 @@
+import sys
+import os
+import casadi as ca
+from numpy.random import randint, rand
+import datetime
 
-def derivatives(scenario,p=None,pf=None,x=None,d=None,w=None,epsilon=1e-6,debug_qp=False):
+# add source path
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-    # # check if p is not passed
-    # if p is None:
-    #     if scenario.init['p'] is None:
-    #         raise Exception('Parameter vector p is not defined.')
-    #     p = scenario.init['p']
+from src.dynamics import Dynamics
+from src.scenario import Scenario
+from src.qp import QP
+from src.ingredients import Ingredients
+from utils.sample_elements import sample_dynamics, sample_ingredients, sample_upper_level
 
-    # # create init dictionary
-    # init = {'p':p}
-    # if x0_in is not None:
-    #     init['x'] = x0_in
-    # if d_in is not None:
-    #     init['d'] = d_in
-    # if w_in is not None:
-    #     init['w'] = w_in
+def test_parallel_derivatives(mpc_horizon=None,upper_horizon=None,n_models=5,tol=1e-5):
 
-    # create dictionary of initial conditions
-    init = {'p':p,'pf':pf,'x':x,'d':d,'w':w}
+    if mpc_horizon is None:
+        mpc_horizon = randint(1,5)
 
-    # remove entries that are None
-    init = {k: v for k, v in init.items() if v is not None}
+    if upper_horizon is None:
+        upper_horizon = randint(2,7)
 
-    # setup parameters
-    p,pf,W,D,Y,X = scenario.getInitParameters(init)
+    # generate noise free dynamics
+    dynamics_dict, _ = sample_dynamics(use_d=False,use_w=False,use_theta=True,nonlinear=False)
 
-    # extract cost function
-    cost_f = scenario.upperLevel.cost
+    # extract theta
+    theta = dynamics_dict['theta']
 
-    # extract gradient of cost function
-    J_cost_f = scenario.upperLevel.J_cost
+    # create dynamics
+    dynamics = Dynamics(dynamics_dict)
+    
+    # create ingredients
+    p, _, cost, constraints = sample_ingredients(dynamics.dim,p=True,horizon=mpc_horizon)
+    ingredients = Ingredients(horizon=mpc_horizon,cost=cost,constraints=constraints,dynamics=dynamics)
 
-    # main simulation loop
-    if debug_qp:
-        S,qp_data,_ = scenario._scenario__simulate(p,pf,W,D,Y,X,options={'debugQP':True,'epsilon':1e-8,'roundoff_QP':12})
-    else:
-        S,qp_data,_ = scenario._scenario__simulate(p,pf,W,D,Y,X)
+    # create MPC
+    mpc = QP(ingredients=ingredients,p=p,pf=theta)
 
-    # get conservative jacobian
-    J_x_p = S.Jx
-    J_y_p = S.Jy
-    # J_u_p = simOut.Ju
-    # J_e_p = simOut.Jeps
+    # create sample upper level
+    upper_level = sample_upper_level(p=p,pf=theta,mpc=mpc,horizon=upper_horizon)
 
-    # compute closed-loop cost and closed-loop cost jacobian
-    cost,track_cost,cst_viol = cost_f(S)
-    J_cost = J_cost_f(S)
+    # create scenario
+    scenario = Scenario(dyn=dynamics,mpc=mpc,upper_level=upper_level)
 
-    # initialize derivatives
-    DX = DM(*J_x_p.shape)
-    DY = DM(*J_y_p.shape)
-    Dcost = DM(*J_cost.shape)
+    # get dimensions for simplicity
+    n = scenario.dim
 
-    # check against finite differences
-    k = 0
-    for v in np.eye(p.shape[0]):
+    # generate some thetas
+    theta0 = ca.horzsplit(rand(n['theta'],n_models))
 
-        # simulate with perturbed parameter
-        S_p,_,_ = scenario._scenario__simulate(p + DM(v*epsilon),pf,W,D,Y,X, options={'mode':'Simulate'})
+    # initialize
+    init_dict = {'p':ca.DM(rand(n['p'],1)),'x': ca.DM(rand(n['x'],1)),'u': ca.DM(rand(n['u'],1)),'theta':theta0,'pf':theta0[0]}
+    scenario.set_init(init_dict)
 
-        # simulate with perturbed parameter
-        S_p_2,_,_ = scenario._scenario__simulate(p - DM(v*epsilon),pf,W,D,Y,X, options={'mode':'Simulate'})
+    # simulate with initial parameter
+    sim,*_ = scenario.simulate(options={'simulate_parallel_models':True})
+    # sim,*_ = scenario.simulate()
 
-        # get closed-loop trajectory
-        X_p = S_p.x
-        Y_p = vec(S_p.y)
-        # U_p = S_p.u
-        # E_p = S_p.e
-        X_p_2 = S_p_2.x
-        Y_p_2 = vec(S_p_2.y)
-        # U_p_2 = S_p_2.u
-        # E_p_2 = S_p_2.e
+    # preallocate list of derivatives
+    j_x = []
 
-        # get cost
-        cost_p,_,_ = cost_f(S_p)
-        cost_p_2,_,_ = cost_f(S_p_2)
+    # loop through all the thetas and compute individual derivatives
+    for theta in theta0:
 
-        # compute numerical derivative
-        dx_num = (X_p-X_p_2)/(2*epsilon)
-        dy_num = (Y_p-Y_p_2)/(2*epsilon)
-        # du_num = (U_p-U_p_2)/(2*epsilon)
-        # de_num = (E_p-E_p_2)/(2*epsilon)
-        dcost_num = (cost_p-cost_p_2)/(2*epsilon)
-        
+        # update initialization
+        scenario.set_init({'theta':theta})
+
+        # simulate
+        sim_single,*_ = scenario.simulate(options={'simulate_parallel_models':False})
+
         # store result
-        DX[:,k] = dx_num
-        DY[:,k] = dy_num
-        Dcost[k] = dcost_num
+        j_x.append(sim_single.j_x)
 
-        # increase index
-        k = k + 1
+    # concatenate
+    j_x = ca.hcat(j_x)
 
-        # printout
-        print(f'Done {k} out of {p.shape[0]}, current error (relative) {norm_2(dx_num - J_x_p@DM(v))/norm_2(dx_num)}, current error (absolute) {norm_2(dx_num - J_x_p@DM(v))}, true magnitude: {norm_2(dx_num)}')
+    # compute error
+    error = ca.fabs(j_x-sim.j_x)
+    error_max = ca.mmax(error)
+    error_mean = ca.sum1(ca.sum2(error)) / error.numel()
+    cos_sim = ca.vec(j_x).T@ca.vec(sim.j_x) / ( ca.norm_2(ca.vec(j_x)) * ca.norm_2(ca.vec(sim.j_x)) )
 
-    # print difference in cost
-    print(f'Difference in cost: {Dcost-J_cost}')
+    if 1-cos_sim > tol:
 
-    return {'dx':J_x_p, 'dx_num':DX, 'dy':J_y_p, 'dy_num':DY, 'd_cost_num':Dcost, 'd_cost':J_cost, 'qp_data':qp_data}
+        # save data for debug purposes
+        data = {'init_dict':init_dict,'theta0':theta0,'p':p,'dynamics_dict':dynamics_dict,'upper_horizon':upper_horizon,'mpc_horizon':mpc_horizon}
 
+        # get current date and time
+        now = datetime.datetime.now()
+
+    assert 1-cos_sim <= tol, 'Parallel derivative error is too large.'
+
+
+if __name__ == "__main__":
+    test_parallel_derivatives()
