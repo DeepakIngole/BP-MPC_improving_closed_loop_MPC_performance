@@ -16,10 +16,8 @@ from src.qp import QP
 from src.ingredients import Ingredients
 from utils.cleanup import cleanup
 from utils.cost_utils import quad_cost_and_bounds,bound2poly,param2terminal_cost,dare2param
-import examples.dynamics.random_linear as random_linear
-from src.plotter import Plotter
 from src.upper_level import UpperLevel
-from utils.parameter_update import average_gradient_descent, robust_gradient_descent, gradient_descent
+from utils.parameter_update import robust_gradient_descent, gradient_descent
 from utils.sys_id import rls, rls_robust
 
 # cleanup jit files
@@ -258,13 +256,13 @@ for i,model in enumerate(model_list):
     if use_noise:
         init_dict['w'] = model['w0']
     init_dict['theta'] = [init_dict['theta']] * N_MODELS # needed for compatibility
-    scenario.set_init(init_dict)
+    # scenario.set_init(init_dict)
 
     # update options
     sim_options = {'use_true_model':False,'max_k':ITERATIONS,'true_theta':np.array(model['theta_true'])}
     if MODE == 'robust':
         sim_options['simulate_parallel_models'] = True
-    scenario.update_options(sim_options)
+    # scenario.update_options(sim_options)
 
     # run first simulation
     _, _, qp_failed = scenario.simulate()

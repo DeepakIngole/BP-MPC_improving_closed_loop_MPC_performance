@@ -116,6 +116,7 @@ class SimVar:
         self.psi = None     # auxiliary parameter for closed-loop optimization
         self.cost = None    # closed-loop cost
         self.cst = None     # closed-loop constraint violation
+        self.theta = None   # nominal model
 
     def stack(self) -> None:
         """

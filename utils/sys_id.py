@@ -2,7 +2,6 @@ import casadi as ca
 import numpy as np
 from typing import Callable, Tuple, Union, Optional
 from scipy.linalg import solve,lstsq
-import time
 import os,sys
 from typeguard import typechecked
 from utils.sample_utils import sample_unit_ball
@@ -156,10 +155,6 @@ def rls_robust(
         idx_pf:Optional[range]=None
     ) -> Tuple[Callable, Callable, ca.Function]:
 
-    # form function defining the confidence region
-    def c_k_func(beta_k):
-        return R*np.sqrt( ( n_theta*np.log(beta_k) - n_theta*np.log(lam) - np.log(delta) ) / ( beta_k ) ) + lam**0.5*S/np.sqrt(beta_k)
-
     # obtain phi function
     phi = get_phi(dynamics,horizon,jit)
 
@@ -171,6 +166,19 @@ def rls_robust(
     # precompute dimension of theta
     n_theta = dynamics.param_nom['theta'].shape[0]
     n_x = dynamics.dim['x']
+
+    # form function defining the confidence region
+    def c_k_func(beta_k):
+        return R*np.sqrt( ( n_theta*np.log(beta_k) - n_theta*np.log(lam) - np.log(delta) ) / ( beta_k ) ) + lam**0.5*S/np.sqrt(beta_k)
+    
+    import matplotlib.pyplot as plt
+
+    temp_x = np.arange(3,6,0.1)
+    temp_y = c_k_func(temp_x)
+    plt.plot(temp_x,temp_y)
+    plt.xlabel('Smallest eigenvalue')
+    plt.ylabel('c_k')
+    plt.show()
 
     def sys_id_update(sim:SimVar,running_vars:dict,k:int) -> dict:
         """
@@ -204,8 +212,8 @@ def rls_robust(
         phi_reshaped = phi_k.reshape(n_x,n_theta,horizon,order='F').transpose(2,1,0)
 
         # update a and b
-        a_k_1 = ca.DM(a_k + np.einsum('nij,njk->ik', phi_reshaped, phi_reshaped.transpose(0,2,1)))
-        b_k_1 = ca.DM(b_k + np.atleast_2d(np.einsum('nij,nj->i', phi_reshaped, z_k.T)).T)
+        a_k_1 = a_k + ca.DM(np.einsum('nij,njk->ik', phi_reshaped, phi_reshaped.transpose(0,2,1)))
+        b_k_1 = b_k + ca.DM(np.atleast_2d(np.einsum('nij,nj->i', phi_reshaped, z_k.T)).T)
 
         # compute new model
         theta_single = ca.solve(a_k_1,b_k_1)
