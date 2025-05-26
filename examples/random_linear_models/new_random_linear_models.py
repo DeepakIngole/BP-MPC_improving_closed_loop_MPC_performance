@@ -101,7 +101,7 @@ ALL_MODELS = []
 
 # initialize pretty table
 table = PrettyTable()
-table.field_names = ["MODEL", "Constraint violation (first-last)", "Cost (first-last-increment)", "QP failed"]
+table.field_names = ["MODEL", "Constraint violation (first-last)", "Cost (first-last-increment)", "Best achievable cost", "QP failed"]
 
 # loop through all models
 for i,model in enumerate(model_list):
@@ -301,8 +301,20 @@ for i,model in enumerate(model_list):
     else:
         qp_failed = 'Never'
 
+    # create trajectory optimization solver
+    NLP = scenario.make_trajectory_opt(theta=model['theta_true'])
+
+    # warm start if QP has not failed
+    x_warm = sim_list[-1].x if qp_failed == 'Never' else None
+    u_warm = sim_list[-1].u if qp_failed == 'Never' else None
+    
+    # solve trajectory optimization problem
+    nlp_out,nlp_solved = NLP(x0,x_warm,u_warm)
+
+    best_cost = nlp_out.cost if nlp_solved else ca.inf
+
     # add to table
-    table.add_row([i, f'{ca.sum1(ca.fmax(cst[0],0))} | {ca.sum1(ca.fmax(cst[-1],0))}', f'{cost[0]} | {cost[-1]} | {cost[-1]-cost[0]}', qp_failed])
+    table.add_row([i, f'{ca.sum1(ca.fmax(cst[0],0))} | {ca.sum1(ca.fmax(cst[-1],0))}', f'{cost[0]} | {cost[-1]} | {cost[-1]-cost[0]}', best_cost, qp_failed])
 
     # clear previous rows
     if i > 0:

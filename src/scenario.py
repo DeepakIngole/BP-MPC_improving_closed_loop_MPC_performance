@@ -15,6 +15,7 @@ from typing import Tuple, Optional, Union
 TODO: trajectory optimization should be a separate class!
 TODO: inherit methods related to options and symbolic variables that are shared across classes
 TODO: create multiple consecutive scenarios with the same variables and see what happens
+TODO: qp failure should be determined on the flag returned by the QP
 """
 
 class Scenario:
@@ -147,6 +148,7 @@ class Scenario:
         return self._trajectory_opt
     
     def make_trajectory_opt(self,theta=None):
+        # TODO: type check and better description
         """
         Creates and returns an optimal control trajectory solver for the system.
         This method formulates an optimal control problem using CasADi's Opti stack,
@@ -635,8 +637,12 @@ class Scenario:
             # get qp parameter
             p_0 = self.upper_level.idx['qp'](var_in_qp,0)
 
-            # run QP once to get better initialization
-            lam_t,mu_t,y_all_t = self.qp.solve(p_0)
+            try:
+                # run QP once to get better initialization
+                lam_t,mu_t,y_all_t = self.qp.solve(p_0)
+            except:
+                qp_failed = True
+                return None, None, qp_failed
 
             # update y0
             y0_x = y_all_t[self.qp.idx['out']['x'][:-self.dim['x']]]
