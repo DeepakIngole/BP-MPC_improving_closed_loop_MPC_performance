@@ -183,7 +183,7 @@ scenario.set_init(init_dict)
 S,qp_data_sparse,_ = scenario.simulate(options={'use_true_model':False})
 
 # test closed loop
-SIM,_,p_best = scenario.closed_loop(options={'max_k':5})
+SIM,_,p_best,_ = scenario.closed_loop(options={'max_k':5})
 
 # get last value of p
 # p_final = SIM[-1].p

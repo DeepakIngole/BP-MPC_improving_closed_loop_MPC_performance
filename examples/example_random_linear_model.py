@@ -18,7 +18,7 @@ from src.upper_level import UpperLevel
 import numpy as np
 from utils.parameter_update import average_gradient_descent, robust_gradient_descent, gradient_descent
 from utils.sys_id import rls, rls_robust
-from utils.poles_to_linear_sys import poles_to_linear_sys
+from utils.linear import poles_to_linear_sys
 
 # cleanup jit files
 cleanup()
@@ -274,7 +274,7 @@ scenario.update_options(sim_options)
 
 
 # test closed loop
-sim_list,_,p_best = scenario.closed_loop()
+sim_list,_,p_best,_ = scenario.closed_loop()
 
 # # modify upper-level algorithm
 # upper_level.set_alg(

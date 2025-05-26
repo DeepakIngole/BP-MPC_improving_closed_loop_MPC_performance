@@ -174,7 +174,7 @@ S,qp_data_sparse,_ = scenario.simulate()
 Plotter.plotTrajectory(S,options={'x':[0,1,2,3],'x_legend':['Position untrained','Velocity untrained','Angle untrained','Angular velocity untrained'],'u':[0],'u_legend':['Force untrained'],'color':'blue'},show=False)
 
 # test closed loop
-SIM,_,p_best = scenario.closed_loop(options={'max_k':5})
+SIM,_,p_best,_ = scenario.closed_loop(options={'max_k':5})
 
 # get last value of p
 p_final = SIM[-1].p
@@ -198,7 +198,7 @@ Plotter.plotTrajectory(nlp_out,options={'x':[0,1,2,3],'x_legend':['Position best
 
 # after training, test speed of dense and sparse qp formulations
 # start with sparse
-SIM_sparse,time_sparse,p_final = scenario.closed_loop(init={'p':p_final},options={'max_k':3,'mode':'simulate'})
+SIM_sparse,time_sparse,p_final,_ = scenario.closed_loop(init={'p':p_final},options={'max_k':3,'mode':'simulate'})
 
 # printout
 max_time = np.max(time_sparse['qp'])
@@ -208,7 +208,7 @@ print(f'Max qp time (sparse): {max_time}, mean qp time (sparse): {mean_time}')
 # create sparse QP
 MPC.make_dense_qp(p=p_final)
 scenario.update(qp=MPC)
-SIM_dense,time_dense,p_final = scenario.closed_loop(init={'p':p_final},options={'max_k':3,'mode':'dense'})
+SIM_dense,time_dense,p_final,_ = scenario.closed_loop(init={'p':p_final},options={'max_k':3,'mode':'dense'})
 
 # printout
 max_time = np.max(time_dense['qp'])

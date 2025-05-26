@@ -363,7 +363,7 @@ class Scenario:
         # now self.init contains initialization values that are either a single ca.DM vector
         # or a list of ca.DM vectors, each vector has the dimension of the associated variable,
         # i.e., the value contained in self.dim.
-        init_values = self.init | init if init is not None else self.init
+        init_values = self.init | init if init is not None else self.init.copy()
 
         # theta is an exception: it can be a list or a list of lists. If this is the case,
         # it must be converted to either a single DM matrix or list of matrices.
