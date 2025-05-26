@@ -171,14 +171,14 @@ def rls_robust(
     def c_k_func(beta_k):
         return R*np.sqrt( ( n_theta*np.log(beta_k) - n_theta*np.log(lam) - np.log(delta) ) / ( beta_k ) ) + lam**0.5*S/np.sqrt(beta_k)
     
-    import matplotlib.pyplot as plt
+    # import matplotlib.pyplot as plt
 
-    temp_x = np.arange(3,6,0.1)
-    temp_y = c_k_func(temp_x)
-    plt.plot(temp_x,temp_y)
-    plt.xlabel('Smallest eigenvalue')
-    plt.ylabel('c_k')
-    plt.show()
+    # temp_x = np.arange(3,6,0.1)
+    # temp_y = c_k_func(temp_x)
+    # plt.plot(temp_x,temp_y)
+    # plt.xlabel('Smallest eigenvalue')
+    # plt.ylabel('c_k')
+    # plt.show()
 
     def sys_id_update(sim:SimVar,running_vars:dict,k:int) -> dict:
         """
@@ -220,7 +220,7 @@ def rls_robust(
 
         # get radius of uncertainty ball
         c_k = c_k_func(np.linalg.svdvals(np.array(a_k_1))[-1])
-        print(c_k)
+        # print(c_k)
 
         # generate random theta samples
         theta = ca.DM(theta_single + c_k*sample_unit_ball(n_theta,n_models).T)

@@ -15,7 +15,6 @@ from typing import Tuple, Optional, Union
 TODO: trajectory optimization should be a separate class!
 TODO: inherit methods related to options and symbolic variables that are shared across classes
 TODO: create multiple consecutive scenarios with the same variables and see what happens
-TODO: init passed to simulate or closed_loop should not overwrite the init in scenario
 """
 
 class Scenario:
@@ -999,7 +998,7 @@ class Scenario:
             running_vars = running_vars | {'d':d[idx], 'w':w[idx], 'x':x[idx], 'y':y[idx], 'theta':theta[idx]} | sys_id_vars
 
             # run simulation
-            sim_k, qp_data, qp_failed = self._simulate(running_vars,n_models=n_models)
+            sim_k, qp_data, qp_failed = self._simulate(var_in=running_vars,options=sim_options,n_models=n_models)
 
             # compute cost and constraint violation
             cost,track_cost,cst_viol = self.upper_level.cost(sim_k)

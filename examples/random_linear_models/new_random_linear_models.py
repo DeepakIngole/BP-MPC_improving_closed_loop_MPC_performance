@@ -259,19 +259,22 @@ for i,model in enumerate(model_list):
     # scenario.set_init(init_dict)
 
     # update options
-    sim_options = {'use_true_model':False,'max_k':ITERATIONS,'true_theta':np.array(model['theta_true'])}
+    sim_options = {'use_true_model':False,'max_k':ITERATIONS,'true_theta':np.array(model['theta_true']),'verbosity':0}
     if MODE == 'robust':
         sim_options['simulate_parallel_models'] = True
     # scenario.update_options(sim_options)
 
     # run first simulation
-    _, _, qp_failed = scenario.simulate()
+    _, _, qp_failed = scenario.simulate(options=sim_options,init=init_dict)
 
     if qp_failed:
         raise ValueError('QP failed')
     
     # test closed loop
-    sim_list,_,p_best = scenario.closed_loop()
+    sim_list,_,p_best = scenario.closed_loop(options=sim_options,init=init_dict)
+
+    # printout
+    print(f'Done {i} out of {len(model_list)}')
 
 # while True:
 
