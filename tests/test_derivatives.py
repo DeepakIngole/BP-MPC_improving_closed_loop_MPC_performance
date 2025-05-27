@@ -63,7 +63,7 @@ def test_parallel_derivatives(mpc_horizon=None,upper_horizon=None,n_models=5,tol
     for theta in theta0:
 
         # simulate
-        sim_single,*_ = scenario.simulate(options={'simulate_parallel_models':False},init={'theta':theta})
+        sim_single,*_ = scenario.simulate(options={'simulate_parallel_models':False,'use_true_model':False},init={'theta':theta})
 
         # store result
         j_x.append(sim_single.j_x)
