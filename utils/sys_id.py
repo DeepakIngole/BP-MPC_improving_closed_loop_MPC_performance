@@ -1,7 +1,7 @@
 import casadi as ca
 import numpy as np
 from typing import Callable, Tuple, Union, Optional
-from scipy.linalg import solve,lstsq
+from scipy.linalg import solve
 import os,sys
 from typeguard import typechecked
 from utils.sample_utils import sample_unit_ball
@@ -13,6 +13,21 @@ from src.sim_var import SimVar
 from src.dynamics import Dynamics
 
 def get_c_k_func(R:float,n_theta:int,lam:float,delta:float,S:float) -> Callable[[float],float]:
+    """
+    Creates a function to compute the confidence bound c_k as a function of beta.
+    Parameters:
+        R (float): A positive constant related to the system or noise.
+        n_theta (int): The dimension of the parameter vector (must be positive).
+        lam (float): Regularization parameter (must be non-negative).
+        delta (float): Confidence level parameter (0 <= delta < 1).
+        S (float): Upper bound on the norm of the parameter vector (must be positive).
+    Returns:
+        Callable[[float], float]: A function c_k_func(beta) that computes the confidence bound for a given beta.
+    Raises:
+        AssertionError: If any of the input parameters do not satisfy their constraints.
+    The returned function computes:
+        c_k(beta) = R * sqrt((n_theta * log(beta) - n_theta * log(lam) - log(delta)) / beta) + sqrt(lam) * S / sqrt(beta)
+    """
 
     assert S > 0
     assert R > 0
@@ -20,6 +35,27 @@ def get_c_k_func(R:float,n_theta:int,lam:float,delta:float,S:float) -> Callable[
     assert delta >= 0 and delta < 1
         
     def c_k_func(beta):
+        """
+        Computes the value of the c_k function used in system identification or control algorithms.
+
+        Parameters:
+            beta (float): A positive scalar parameter, typically related to the number of samples or confidence level.
+
+        Returns:
+            float: The computed value of the c_k function based on the provided beta and global variables.
+
+        Notes:
+            This function relies on the following global variables:
+                - R: A scalar constant (e.g., related to system noise or bounds).
+                - n_theta: The dimensionality of the parameter vector.
+                - lam: Regularization parameter (lambda), must be positive.
+                - delta: Confidence parameter, must be in (0, 1).
+                - S: A scalar constant (e.g., related to system bounds).
+
+            The formula is:
+                c_k(beta) = R * sqrt( (n_theta * log(beta) - n_theta * log(lam) - log(delta)) / beta )
+                           + sqrt(lam) * S / sqrt(beta)
+        """
         return R*np.sqrt( ( n_theta*np.log(beta) - n_theta*np.log(lam) - np.log(delta) ) / ( beta ) ) + lam**0.5*S/np.sqrt(beta)
     
     return c_k_func
@@ -421,8 +457,8 @@ def rls_update_debug(horizon:int,phi:ca.Function,sim:SimVar,running_vars:dict,k:
         z_k_list = np.split(z_k,horizon,axis=1)
 
         # preallocate outer products
-        product_1 = a_k #np.zeros((phi_k_list[0].shape[0],phi_k_list[0].shape[0]))
-        product_2 = b_k #np.zeros((phi_k_list[0].shape[0],z_k_list[0].shape[1]))
+        product_1 = a_k
+        product_2 = b_k
 
         # test against for loop
         for i in range(horizon):
