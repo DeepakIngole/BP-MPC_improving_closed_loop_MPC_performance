@@ -12,6 +12,18 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from src.sim_var import SimVar
 from src.dynamics import Dynamics
 
+def get_c_k_func(R:float,n_theta:int,lam:float,delta:float,S:float) -> Callable[[float],float]:
+
+    assert S > 0
+    assert R > 0
+    assert lam >= 0
+    assert delta >= 0 and delta < 1
+        
+    def c_k_func(beta):
+        return R*np.sqrt( ( n_theta*np.log(beta) - n_theta*np.log(lam) - np.log(delta) ) / ( beta ) ) + lam**0.5*S/np.sqrt(beta)
+    
+    return c_k_func
+
 def get_phi(dynamics:Dynamics, horizon:int, jit:Optional[bool]=False) -> ca.Function:
     """
     Constructs a CasADi function to compute the feature mapping phi(x, u) for system identification.
@@ -168,11 +180,9 @@ def rls_robust(
     n_x = dynamics.dim['x']
 
     # form function defining the confidence region
-    def c_k_func(beta_k):
-        return R*np.sqrt( ( n_theta*np.log(beta_k) - n_theta*np.log(lam) - np.log(delta) ) / ( beta_k ) ) + lam**0.5*S/np.sqrt(beta_k)
+    c_k_func = get_c_k_func(R=R,n_theta=n_theta,lam=lam,delta=delta,S=S)
     
     # import matplotlib.pyplot as plt
-
     # temp_x = np.arange(3,6,0.1)
     # temp_y = c_k_func(temp_x)
     # plt.plot(temp_x,temp_y)

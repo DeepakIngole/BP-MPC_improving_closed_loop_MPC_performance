@@ -275,6 +275,7 @@ for i,model in enumerate(model_list):
         init_dict['w'] = model['w0']
     # needed for compatibility
     if MODE == 'robust':
+        # TODO: add randomness here too, you need to evaluate c_k_0
         init_dict['theta'] = [init_dict['theta']] * N_MODELS
 
     # update options
@@ -314,7 +315,7 @@ for i,model in enumerate(model_list):
     best_cost = nlp_out.cost if nlp_solved else ca.inf
 
     # add to table
-    table.add_row([i, f'{ca.sum1(ca.fmax(cst[0],0))} | {ca.sum1(ca.fmax(cst[-1],0))}', f'{cost[0]} | {cost[-1]} | {cost[-1]-cost[0]}', best_cost, qp_failed])
+    table.add_row([i, f'{ca.sum1(ca.fmax(cst[0],0))} | {ca.sum1(ca.fmax(cst[-1],0))}', f'{cost[0]} | {cost[-1]} | {cost[-1]-cost[0]}', f'{best_cost} ({best_cost-cost[-1]})', qp_failed])
 
     # clear previous rows
     if i > 0:
