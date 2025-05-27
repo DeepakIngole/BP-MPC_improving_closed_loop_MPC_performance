@@ -294,11 +294,8 @@ class Scenario:
                 and Jacobian components before evaluating the mapped function.
         """
 
-        if jit:
-            self._options.update({'compile_mapped_dynamics' : True})
-
         # check if dynamics should be compiled
-        if self._options['compile_mapped_dynamics']:
+        if jit or self._options['compile_mapped_dynamics']:
             jit_options = {"flags": "-O3", "verbose": False, "compiler": "gcc -Ofast -march=native"}
             compilation_options = {"jit": True, "compiler": "shell", "jit_options": jit_options}
         else:
@@ -363,7 +360,7 @@ class Scenario:
         # now self.init contains initialization values that are either a single ca.DM vector
         # or a list of ca.DM vectors, each vector has the dimension of the associated variable,
         # i.e., the value contained in self.dim.
-        init_values = self.init | init if init is not None else self.init.copy()
+        init_values = self.init.copy() | init.copy() if init is not None else self.init.copy()
 
         # theta is an exception: it can be a list or a list of lists. If this is the case,
         # it must be converted to either a single DM matrix or list of matrices.
