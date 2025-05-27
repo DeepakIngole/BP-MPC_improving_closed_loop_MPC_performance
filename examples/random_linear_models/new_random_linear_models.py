@@ -322,7 +322,7 @@ for i,model in enumerate(model_list):
     print(table)
 
 # save table with results
-
+print('me')
 
 # all_models[most_recent_index]
 

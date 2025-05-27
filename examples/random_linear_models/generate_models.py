@@ -1,7 +1,7 @@
 import sys, os
 import casadi as ca
 import numpy as np
-from typing import Tuple,List
+from typing import Tuple,List,Optional
 from datetime import datetime
 import pickle
 
@@ -27,7 +27,7 @@ HORIZON = 20
 POLE_UNCERTAINTY = 1
 
 # how spread out the initial condition is
-X0_MAG = 2
+X0_MAG = 0
 
 # decide whether to include noise or not
 NOISE_MAG = 0.1
@@ -35,15 +35,24 @@ NOISE_MAG = 0.1
 # number of models used in robust GD
 N_MODELS = 100
 
+# whether or not only feasible models should be generated
+FEASIBLE_ONLY = True
+
+# upper-level cost specification (meaningful only if FEASIBLE_ONLY = True)
+UPPER_LEVEL_SPECS = {'Q':10*ca.DM.eye(NX),'R':1,'x_max':5*ca.DM.ones(NX,1),'x_min':-5*ca.DM.ones(NX,1),'u_max':1,'u_min':-1}
+
+
 def generate_multiple(
         sampling_time:float=0.15,
-        n_x:int=4,
-        horizon:int=20,
+        n_x:int = 4,
+        horizon:int = 20,
         n_models:int = 1,
-        pole_range:Tuple[float,float]=[-5,1],
-        pole_uncertainty:float=1,
-        x0_mag = 2,
+        pole_range:Tuple[float,float] = [-5,1],
+        pole_uncertainty:float = 1,
+        x0_mag:float = 0.0,
         noise_mag:float = 0.0,
+        feasible_only:bool = False,
+        upper_level_specs:dict = None
     ) -> List[dict]:
     """
     Generates a list of random linear models with specified properties.
@@ -52,6 +61,22 @@ def generate_multiple(
     The models are generated with random poles within the given `pole_range` and optional pole uncertainty. The initial state
     dispersion and process noise magnitude can also be specified.
 
+    If the argument "feasible_only" is set to true, then an optimal control problem is additionally solved after each
+    model is generated using the information contained in the argument "upper_level_specs". If the optimal control
+    problem is infeasible, then the model is not included in the list returned by this function. In this way, only models
+    leading to feasible optimization problems are returned.
+
+    The optimization problem is formulated as
+
+        minimize_{x,u}   x^T Q x + u^T R u
+
+        subject to       x_{t+1} = A*x_t + B*u_t,  t = 0,...,T,
+                         x_min <= x_t <= x_max,    t = 0,...,T+1,
+                         u_min <= u_t <= u_max,    t = 0,...,T,
+                         x_0 given,
+        
+    where A,B are the true dynamics contained in the model, and Q,R,x_min,x_max,u_min,u_max are contained in "upper_level_specs".
+
     Args:
         sampling_time (float, optional): Sampling time for the models. Must be positive. Default is 0.15.
         n_x (int, optional): Number of states in each model. Must be positive. Default is 4.
@@ -59,8 +84,12 @@ def generate_multiple(
         n_models (int, optional): Number of models to generate. Must be positive. Default is 1.
         pole_range (Tuple[float, float], optional): Range [min, max] for the real part of the poles. Default is [-5, 1].
         pole_uncertainty (float, optional): Uncertainty range for the poles. Must be non-negative. Default is 1.
-        x0_mag (float, optional): Magnitude of the initial state dispersion. Must be non-negative. Default is 2.
+        x0_mag (float, optional): Magnitude of the initial state dispersion. Must be non-negative. Default is 0, which 
+            leads to x0 = 1.
         noise_mag (float, optional): Magnitude of the process noise. Must be non-negative. Default is 0.1.
+        feasible_only (bool, optional): Whether or not only models leading to feasible optimization problems are returned.
+        upper_level_specs (dict, optional): Specifications of the optimization problem (meaningful only if feasible_only is
+            set to True). It must contain the keys ['Q', 'R', 'x_min', 'x_max', 'u_min', 'u_max'] (see above for details).
 
     Returns:
         List[dict]: A list of dictionaries, each representing a generated random linear model.
@@ -86,16 +115,38 @@ def generate_multiple(
     model_list = []
 
     # generate n_models random linear models
-    for i in range(n_models):
+    i = 0
+    while i < n_models:
+        
+        # generate model
         model = generate_single(
                 sampling_time=sampling_time,
                 n_x=n_x,
                 noise_mag=noise_mag,
                 pole_range=pole_range,
                 horizon=horizon,
-                pole_uncertainty=pole_uncertainty
+                pole_uncertainty=pole_uncertainty,
+                x0_mag=x0_mag
             )
-        model_list.append(model)
+        
+        # check if associated optimization problem is feasible
+        if feasible_only:
+            best_cost = solve_trajectory_optimization(model,upper_level_specs)
+        else:
+            best_cost = 0
+        
+        # add cost to model
+        model['best_cost'] = best_cost
+        model['cost_spec'] = upper_level_specs
+
+        # if feasible, append to model list
+        if best_cost is not ca.inf:
+            model_list.append(model)
+            i += 1
+            print(f'Done: {i} out of {n_models}')
+        # otherwise, skip and try again
+        else:
+            continue
 
     return model_list
 
@@ -106,7 +157,8 @@ def generate_single(
         horizon:int=20,
         pole_range:Tuple[float,float]=[-5,1],
         pole_uncertainty:float=1.0,
-        noise_mag:float=0.0
+        noise_mag:float=0.0,
+        x0_mag:float=0.0
     ) -> dict:
     """
     Generates a single random linear system model with optional uncertainty and noise.
@@ -121,6 +173,7 @@ def generate_single(
         pole_range (Tuple[float, float], optional): Range for sampling the true system poles. Defaults to [-5, 1].
         pole_uncertainty (float, optional): Magnitude of uncertainty to apply to the poles. Defaults to 1.0.
         noise_mag (float, optional): Magnitude of process noise. If 0, no noise is added. Defaults to 0.0.
+        x0_mag (float, optional): Magnitude of the initial state dispersion. If equal to 0, defaults to x0 = 1.
     
     Returns:
         dict: A dictionary containing:
@@ -156,8 +209,7 @@ def generate_single(
     f_nom = ca.Function('x_next_nom', func_in_nom, [dyn_dict['x_next_nom']], func_in_names_nom, ['x_next_nom'])
 
     # set initial conditions
-    x0 = ca.DM.ones(n_x,1)
-    # x0 = ca.DM( X0_MAG * (np.ones((n_x,1)) + 2*np.random.rand(n_x,1)) )
+    x0 = ca.DM.ones(n_x,1) if x0_mag == 0 else ca.DM( x0_mag * (np.ones((n_x,1)) + 2*np.random.rand(n_x,1)) )
 
     # create new system with uncertainty by sampling new poles within the specified
     # uncertainty range
@@ -182,7 +234,7 @@ def generate_single(
     dim = {}
     dim['x'] = n_x
     dim['u'] = 1
-    dim['w'] = w0.shape[0] if use_noise else 0
+    dim['w'] = w0[0].shape[0] if use_noise else 0
     dim['horizon'] = horizon
     dim['Ts'] = sampling_time
     dim['theta'] = theta0.shape[0]
@@ -204,6 +256,82 @@ def generate_single(
 
     return out_dict
 
+def solve_trajectory_optimization(model:dict,upper_level_specs:dict) -> ca.DM:
+    """
+    Solves a trajectory optimization problem for a given linear model and upper-level specifications.
+    Args:
+        model (dict): Dictionary containing model parameters, including:
+            - 'dim': Dictionary with keys 'x' (state dimension), 'u' (input dimension), and 'horizon' (prediction horizon).
+            - 'x0': Initial state vector.
+            - 'f': Function implementing the system dynamics, with signature f(x, u, w).
+            - 'w': Disturbance vector (used for shape).
+        upper_level_specs (dict): Dictionary containing upper-level cost and constraint specifications, including:
+            - 'Q': State cost matrix.
+            - 'R': Input cost matrix.
+            - 'x_max': Upper bound for state.
+            - 'x_min': Lower bound for state.
+            - 'u_max': Upper bound for input.
+            - 'u_min': Lower bound for input.
+    Returns:
+        ca.DM: The optimal cost as a CasADi DM object if the problem is solved successfully; otherwise, returns ca.inf.
+    """
+
+    # get upper level cost
+    Q = upper_level_specs['Q']
+    R = upper_level_specs['R']
+
+    # get upper level constraints
+    x_max = upper_level_specs['x_max']
+    x_min = upper_level_specs['x_min']
+    u_max = upper_level_specs['u_max']
+    u_min = upper_level_specs['u_min']
+
+    # get opti stack
+    opti = ca.Opti()
+
+    # create optimization variables
+    x = opti.variable(model['dim']['x'],model['dim']['horizon']+1)
+    u = opti.variable(model['dim']['u'],model['dim']['horizon'])
+
+    # enforce initial condition
+    opti.subject_to( x[:,0] == model['x0'] )
+
+    # loop for constraints and dynamics
+    for t in range(0,model['dim']['horizon']):
+        
+            # dynamics
+            opti.subject_to( x[:,t+1] == model['f_nom'](x[:,t],u[:,t],model['theta_true']) )
+
+            # test that function is correct
+            arg1 = ca.DM(np.random.rand(*x[:,t].shape))
+            arg2 = ca.DM(np.random.rand(*u[:,t].shape))
+            arg3 = ca.DM(model['dim']['w'],1)
+
+            assert ca.logic_all(model['f'](arg1,arg2,arg3) == model['f_nom'](arg1,arg2,model['theta_true']))
+
+            # bound constraints
+            opti.subject_to( opti.bounded(x_min, x[:,t+1], x_max) )
+            opti.subject_to( opti.bounded(u_min, u[:,t], u_max) )
+
+    # define cost
+    cost =  ca.vec(x).T@ca.kron(ca.DM.eye(model['dim']['horizon']+1),Q)@ca.vec(x) \
+            + ca.vec(u).T@ca.kron(ca.DM.eye(model['dim']['horizon']),R)@ca.vec(u)
+    opti.minimize(cost)
+
+    # solver
+    opts = dict()
+    opts["print_time"] = False
+    opts['ipopt'] = {"print_level": 0, "sb":'yes'}
+    opti.solver('ipopt',opts)
+
+    try:
+        opti.solve()
+        best_cost = ca.DM(opti.value(cost))
+    except:
+        best_cost = ca.inf
+
+    return best_cost
+
 if __name__ == "__main__":
 
     # check if .models directory exists
@@ -217,7 +345,11 @@ if __name__ == "__main__":
         horizon=HORIZON,
         n_models=N_MODELS,
         pole_range=POLE_RANGE,
-        pole_uncertainty=POLE_UNCERTAINTY
+        pole_uncertainty=POLE_UNCERTAINTY,
+        feasible_only=FEASIBLE_ONLY,
+        upper_level_specs=UPPER_LEVEL_SPECS,
+        x0_mag=X0_MAG,
+        noise_mag=NOISE_MAG
     )
 
     # get current date and time

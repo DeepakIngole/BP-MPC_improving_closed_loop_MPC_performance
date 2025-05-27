@@ -996,15 +996,15 @@ class Scenario:
             # run simulation
             sim_k, qp_data, qp_failed = self._simulate(var_in=running_vars,options=sim_options,n_models=n_models)
 
+            # if qp failed, terminate
+            if qp_failed:
+                break
+
             # compute cost and constraint violation
             cost,track_cost,cst_viol = self.upper_level.cost(sim_k)
             
             # store S into list
             sim.append(sim_k)
-
-            # if qp failed, terminate
-            if qp_failed:
-                break
 
             # store QP and Jacobian times
             total_qp_time.append(qp_data['qp_time'])
