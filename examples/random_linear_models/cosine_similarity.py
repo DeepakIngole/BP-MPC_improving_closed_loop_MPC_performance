@@ -8,7 +8,6 @@ from datetime import datetime
 import pickle
 from prettytable import PrettyTable
 
-
 # add root to python path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')))
 
@@ -19,7 +18,7 @@ from src.ingredients import Ingredients
 from utils.cleanup import cleanup
 from utils.cost_utils import quad_cost_and_bounds,bound2poly,param2terminal_cost,dare2param
 from src.upper_level import UpperLevel
-from utils.parameter_update import robust_gradient_descent, gradient_descent
+from utils.parameter_update import robust_gradient_descent, gradient_descent, robust_adam
 from utils.sys_id import rls, rls_robust
 
 import sys
@@ -47,7 +46,7 @@ COMPILE_JAC = False
 SOLVER = 'daqp'
 
 # mode of operation (nominal or robust)
-MODE = 'nominal'
+MODE = 'robust'
 
 # number of models to simulate
 N_MODELS = 10
@@ -61,12 +60,12 @@ L2_PENALTY = 1000
 L1_PENALTY = 1000
 
 # gd parameter
-RHO = 1e-4
-ETA = 0.6
+RHO = 2e-4
+ETA = 0.51
 LOG = True
 
 # system identification parameters
-LAM = 1#0.01
+LAM = 0.01
 
 # penalties on constraint violation (mpc)
 MPC_S_QUAD = 15
@@ -246,7 +245,8 @@ for i,model in enumerate(model_list):
             idx_pf=range(theta0.shape[0]))
         
         # create parameter update algorithm
-        parameter_update, parameter_init = robust_gradient_descent(rho=RHO,eta=ETA,n_models=N_MODELS,n_p=p.shape[0],log=LOG)
+        # parameter_update, parameter_init = robust_gradient_descent(rho=RHO,eta=ETA,n_models=N_MODELS,n_p=p.shape[0],log=LOG)
+        parameter_update, parameter_init = robust_adam(n_models=N_MODELS,n_p=p.shape[0],alpha=1e-5)#beta_1,beta_2,epsilon
 
     else:
 
@@ -316,7 +316,7 @@ for i,model in enumerate(model_list):
     best_cost = nlp_out.cost if nlp_solved else ca.inf
 
     # add to table
-    table.add_row([i, f'{ca.sum1(ca.fmax(cst[0],0))} | {ca.sum1(ca.fmax(cst[-1],0))}', f'{cost[0]} | {cost[-1]} | {cost[-1]-cost[0]}', best_cost, qp_failed])
+    table.add_row([i, f'{ca.sum1(ca.fmax(cst[0],0))} | {ca.sum1(ca.fmax(cst[-1],0))}', f'{cost[0]} | {cost[-1]} | {cost[-1]-cost[0]}', f'{best_cost} ({best_cost-cost[-1]})', qp_failed])
 
     # clear previous rows
     if i > 0:
