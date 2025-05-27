@@ -289,9 +289,7 @@ class QP:
                 S = ca.conic('S','osqp',qp,options | {'osqp':{'verbose':False},'equality':is_equality})
                 # S = ca.conic('S','osqp',qp,options | {'equality':is_equality})
             case 'daqp':
-
                 S = daqp_interface(is_equality)
-
                 # S = ca.conic('S','daqp',qp,options)
             case 'qrqp':
                 S = ca.conic('S','qrqp',qp,options | {'print_iter':False,'equality':is_equality})
@@ -699,10 +697,6 @@ class QP:
     @property
     def init(self):
         return {key:val for key,val in self._sym.init.items() if val is not None}
-    
-    def _set_init(self, data):
-        # TODO: improve the set_init function
-        self._sym.set_init(data)
 
     def debug(self,lam,mu,p_t,epsilon=1e-6,roundoff=10,y_all=None):
         #TODO: update this

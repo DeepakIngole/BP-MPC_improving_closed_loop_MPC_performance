@@ -85,7 +85,7 @@ def test_set_init_and_set_options():
     sim2,*_ = scenario.simulate(init=init_dict_2,options=options_2)
 
     # check that init has not been changed
-    assert ca.logic_all(scenario.init['p'] == init_dict_1['p']) and ca.logic_all(scenario.init['x'] == init_dict_1['x']) and ca.logic_all(scenario.init['theta'] == ca.hcat(init_dict_1['theta'])) and ca.logic_all(scenario.init['pf'] == init_dict_1['pf']), 'Initialization was mistakenly changed.'
+    assert ca.logic_all(scenario.init['p'] == init_dict_1['p']) and ca.logic_all(scenario.init['x'] == init_dict_1['x']) and ca.logic_all(ca.hcat(scenario.init['theta']) == ca.hcat(init_dict_1['theta'])) and ca.logic_all(scenario.init['pf'] == init_dict_1['pf']), 'Initialization was mistakenly changed.'
     assert all( [ val == scenario.options[key] for key,val in options_1.items() ] ), 'Options were mistakenly changed.'
 
     # check that second simulation used correct parameters

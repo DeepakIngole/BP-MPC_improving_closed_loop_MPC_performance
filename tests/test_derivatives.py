@@ -3,6 +3,8 @@ import os
 import casadi as ca
 from numpy.random import randint, rand
 import datetime
+import numpy as np
+from typing import Optional, Tuple
 
 # add source path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
@@ -11,9 +13,15 @@ from src.dynamics import Dynamics
 from src.scenario import Scenario
 from src.qp import QP
 from src.ingredients import Ingredients
+from src.scenario import Scenario
 from utils.sample_elements import sample_dynamics, sample_ingredients, sample_upper_level
 
-def test_parallel_derivatives(mpc_horizon=None,upper_horizon=None,n_models=5,tol=1e-5):
+def test_parallel_derivatives(
+        mpc_horizon:Optional[int]=None,
+        upper_horizon:Optional[int]=None,
+        n_models:int=5,
+        tol:float=1e-5
+    ) -> None:
 
     if mpc_horizon is None:
         mpc_horizon = randint(1,5)
@@ -87,6 +95,123 @@ def test_parallel_derivatives(mpc_horizon=None,upper_horizon=None,n_models=5,tol
 
     assert 1-cos_sim <= tol, 'Parallel derivative error is too large.'
 
+def test_closed_loop_derivative(
+        mpc_horizon:Optional[int]=None,
+        upper_horizon:Optional[int]=None,
+        epsilon:float=1e-5,
+        tol:float=1e-5
+    ) -> None:
+
+    if mpc_horizon is None:
+        mpc_horizon = randint(1, 5)
+
+    if upper_horizon is None:
+        upper_horizon = randint(7, 15)
+
+    # generate noise free dynamics
+    dynamics_dict, _ = sample_dynamics(use_d=False, use_w=False, use_theta=True, nonlinear=False)
+
+    # extract theta
+    theta = dynamics_dict['theta']
+
+    # create dynamics
+    dynamics = Dynamics(dynamics_dict)
+
+    # create ingredients
+    p, _, cost, constraints = sample_ingredients(dynamics.dim, p=True, horizon=mpc_horizon)
+    ingredients = Ingredients(horizon=mpc_horizon, cost=cost, constraints=constraints, dynamics=dynamics)
+
+    # create MPC
+    mpc = QP(ingredients=ingredients, p=p, pf=theta)
+
+    # create sample upper level
+    upper_level = sample_upper_level(p=p, pf=theta, mpc=mpc, horizon=upper_horizon)
+
+    # create scenario
+    scenario = Scenario(dyn=dynamics, mpc=mpc, upper_level=upper_level)
+
+    # get dimensions for simplicity
+    n = scenario.dim
+
+    # generate some thetas
+    theta0 = ca.DM(rand(n['theta'],1))
+
+    # initialize
+    init_dict = {'p': ca.DM(rand(n['p'], 1)), 'x': ca.DM(rand(n['x'], 1)), 'u': ca.DM(rand(n['u'], 1)), 'theta': theta0,'pf': theta0}
+
+    # run finite differences
+    d_num, d_analytic = finite_differences(scenario=scenario,init_dict=init_dict,epsilon=epsilon)
+
+    # compute cosine similarities
+    cos_x = ca.dot(ca.vec(d_num['x']), ca.vec(d_analytic['x'])) / (
+                ca.norm_2(ca.vec(d_num['x'])) * ca.norm_2(ca.vec(d_analytic['x'])))
+    cos_y = ca.dot(ca.vec(d_num['y']), ca.vec(d_analytic['y'])) / (
+                ca.norm_2(ca.vec(d_num['y'])) * ca.norm_2(ca.vec(d_analytic['y'])))
+    cos_cost = ca.dot(ca.vec(d_num['cost']), ca.vec(d_analytic['cost'])) / (
+                ca.norm_2(ca.vec(d_num['cost'])) * ca.norm_2(ca.vec(d_analytic['cost'])))
+
+    assert 1 - cos_x <= tol, 'X derivative error is too large.'
+    assert 1 - cos_y <= tol, 'Y derivative error is too large.'
+    assert 1 - cos_cost <= tol, 'Cost derivative error is too large.'
+
+def finite_differences(scenario:Scenario,init_dict:dict=None,epsilon:float=1e-8) -> Tuple[dict,dict]:
+
+    if init_dict is None:
+        init_dict = {}
+
+    # simulate and get derivatives
+    sim, *_ = scenario.simulate(init=init_dict) if init_dict else scenario.simulate()
+    j_x, j_y, j_u = sim.j_x, sim.j_y, sim.j_u
+
+    # get cost and its derivative
+    cost, *_ = scenario.upper_level.cost(sim)
+    j_p = scenario.upper_level.j_cost(sim)
+
+    # preallocate lists storing numerical derivatives
+    dx_list, dy_list, dcost_list = [], [], []
+
+    # get parameter p
+    p = scenario.init['p'] if 'p' not in init_dict else init_dict['p']
+
+    # check against finite differences
+    k = 0
+    for v in np.eye(p.shape[0]):
+
+        # simulate with perturbed parameter
+        sim_m, *_ = scenario.simulate(init=init_dict | {'p': p - ca.DM(v * epsilon)}, options={'mode':'simulate'})
+        sim_p, *_ = scenario.simulate(init=init_dict | {'p': p + ca.DM(v * epsilon)}, options={'mode': 'simulate'})
+
+        # get closed-loop trajectory
+        x_p, x_m = sim_p.x, sim_m.x
+        y_p, y_m = ca.vec(sim_p.y), ca.vec(sim_m.y)
+
+        # get cost
+        cost_p, _, _ = scenario.upper_level.cost(sim_p)
+        cost_m, _, _ = scenario.upper_level.cost(sim_m)
+
+        # compute numerical derivative
+        dx_num = (x_p - x_m) / (2 * epsilon)
+        dy_num = (y_p - y_m) / (2 * epsilon)
+        dcost_num = (cost_p - cost_m) / (2 * epsilon)
+
+        # store result
+        dx_list.append(ca.vec(dx_num))
+        dy_list.append(ca.vec(dy_num))
+        dcost_list.append(dcost_num)
+
+        # increase index
+        k = k + 1
+
+        # printout
+        # print(f'Done {k} out of {p.shape[0]}, current error (relative)
+        # {norm_2(dx_num - J_x_p @ DM(v)) / norm_2(dx_num)}, current error (absolute)
+        # {norm_2(dx_num - J_x_p @ DM(v))}, true magnitude: {norm_2(dx_num)}')
+
+    # stack results together and return
+    d_analytic = {'x': j_x, 'y': j_y, 'cost': j_p, 'u':j_u}
+    d_numeric = {'x': ca.hcat(dx_list), 'y': ca.hcat(dy_list), 'cost': ca.vcat(dcost_list)}
+    return d_numeric, d_analytic
 
 if __name__ == "__main__":
+    test_closed_loop_derivative()
     test_parallel_derivatives()

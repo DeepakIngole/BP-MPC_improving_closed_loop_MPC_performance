@@ -452,6 +452,3 @@ class UpperLevel:
     @property
     def init(self):
         return {key: val for key, val in self._sym.init.items() if val is not None}
-
-    def _set_init(self, data):
-        self._sym.set_init(data)

@@ -481,7 +481,7 @@ class Scenario:
 
         return p,pf,w,d,theta,y,x
 
-    def simulate(self,init:dict=None,options:dict=None) -> Union[SimVar,dict,bool]:
+    def simulate(self,init:dict=None,options:dict=None) -> Tuple[SimVar,dict,bool]:
         """
         Simulates the system dynamics based on the provided initial parameters and options.
         Args:
@@ -797,7 +797,7 @@ class Scenario:
                     j_x_p_t = A.call(var_in_dyn_nom)['A']@j_x_p_t + B.call(var_in_dyn_nom)['B']@j_u0_p_t
                     
                     # store conservative jacobians of state and input
-                    sim.add_sim_jac(j_x_p_t,j_u0_p_t,j_y_p_t)
+                    sim.add_sim_jac(j_x_p_t,j_u0_p_t,j_qp_p_t[self.qp.idx['out']['y'],:])
                 else:
                     j_x_p_t = np.einsum('mnr,ndr->mdr',
                                         np.array(A.call(var_in_dyn_nom)['A']).reshape((self.dim['x'],self.dim['x'],n_models),order='F'),
@@ -807,7 +807,7 @@ class Scenario:
                                           np.array(j_u0_p_t).reshape((self.dim['u'],self.dim['p'],n_models),order='F'))
                     
                     # store conservative jacobians of state and input
-                    sim.add_sim_jac(j_x_p_t,j_u0_p_t,j_y_p_t)
+                    sim.add_sim_jac(j_x_p_t,j_u0_p_t,j_qp_p_t[self.qp.idx['out']['y'],:])
 
                 # store in total cons jac time
                 total_jac_time.append(time.time() - cons_jac_time)
@@ -996,15 +996,15 @@ class Scenario:
             # run simulation
             sim_k, qp_data, qp_failed = self._simulate(var_in=running_vars,options=sim_options,n_models=n_models)
 
+            # if qp failed, terminate
+            if qp_failed:
+                break
+
             # compute cost and constraint violation
             cost,track_cost,cst_viol = self.upper_level.cost(sim_k)
             
             # store S into list
             sim.append(sim_k)
-
-            # if qp failed, terminate
-            if qp_failed:
-                break
 
             # store QP and Jacobian times
             total_qp_time.append(qp_data['qp_time'])
