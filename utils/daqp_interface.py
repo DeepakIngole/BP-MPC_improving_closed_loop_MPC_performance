@@ -5,6 +5,7 @@ from utils.callable_wrapper import CallableWrapper
 import casadi as ca
 
 # TODO: warmstart by passing a 1 for constraints that were previously active
+# TODO: write tests
 
 def daqp_interface(is_equality):
 
