@@ -102,25 +102,21 @@ def robust_gradient_descent(rho,eta,n_models,n_p,log=True,jit=False,verbose=Fals
         max_gradient_error, d = solver(sim)
 
         # run GD update
-        p_next = sim.p - (rho*ca.log(k+2)/(k+1)**eta)*d if log else sim.p - (rho/(k+1)**eta)*d
+        p_next = gd_rule(p=sim.p,j_p=d,k=k,rho=rho,eta=eta,log=log)
 
         return {'p':p_next}
 
-    # no initialization for psi
-    parameter_init = lambda sim: {}
-
-    return parameter_update,parameter_init
+    return parameter_update, lambda sim: {}
 
 def gradient_descent(rho,eta=1,log=True):
+
+    def parameter_update(sim,k):
+
+        # run GD update
+        p_next = gd_rule(p=sim.p,j_p=sim.j_p,k=k,rho=rho,eta=eta,log=log)
+
+        return {'p':p_next}
     
-    def update_log(sim,k):
-        return {'p': sim.p - (rho*ca.log(k+2)/(k+1)**eta)*sim.j_p}
-    
-    def update_simple(sim,k):
-        return {'p': sim.p - (rho/(k+1)**eta)*sim.j_p}
-        
-    parameter_update = update_log if log else update_simple
-        
     return parameter_update, lambda sim: {}
 
 def minibatch_descent(rho,eta=1,log=True,batch_size=1):
@@ -137,7 +133,7 @@ def minibatch_descent(rho,eta=1,log=True,batch_size=1):
             psi = {'j_p':ca.DM.zeros(*j_p.shape)}
             
             # run update
-            p = sim.p - (rho*ca.log(k+2)/(k+1)**eta)*j_p if log else sim.p - (rho/(k+1)**eta)*j_p
+            p = gd_rule(p=sim.p,j_p=j_p,k=k,rho=rho,eta=eta,log=log)
 
         # else update gradient
         else:
@@ -159,8 +155,12 @@ def average_gradient_descent(rho,eta,log=True):
         j_p = ca.sum2(sim.j_p) / sim.j_p.shape[1]
 
         # gradient step
-        p_next = sim.p - (rho*ca.log(k+2)/(k+1)**eta)*j_p if log else sim.p - (rho/(k+1)**eta)*j_p
+        p_next = gd_rule(p=sim.p,j_p=j_p,k=k,rho=rho,eta=eta,log=log)
 
         return {'p':p_next}
 
     return parameter_update, lambda sim: {}
+
+def gd_rule(p,j_p,k,rho,eta,log):
+
+    return p - (rho*ca.log(k+2)/(k+1)**eta)*j_p if log else p - (rho/(k+1)**eta)*j_p
