@@ -1,31 +1,14 @@
 import casadi as ca
 import numpy as np
 from typing import Callable, Tuple
+from src.sim_var import SimVar
 
-def average_gradient_descent(rho,eta,log=True):
-
-    def parameter_update(sim,k):
-
-        # average all Jacobians
-        j_p = ca.sum2(sim.j_p) / sim.j_p.shape[1]
-
-        # gradient step
-        p_next = sim.p - (rho*ca.log(k+2)/(k+1)**eta)*j_p if log else sim.p - (rho/(k+1)**eta)*j_p
-
-        return {'p':p_next}
-
-    return parameter_update, lambda sim: {}
-
-def robust_adam(
+def robust_descent_solver(
         n_models:int,
         n_p:int,
-        alpha:float=0.001,
-        beta_1:float=0.9,
-        beta_2:float=0.999,
-        epsilon:float=1e-8,
         jit:bool=False,
         verbose:bool=False
-    ) -> Tuple[Callable,Callable]:
+    ) -> Callable[[SimVar],Tuple[ca.DM,ca.DM]]:
 
     # compilation options
     if jit:
@@ -36,8 +19,6 @@ def robust_adam(
 
     if not verbose:
         options = options | {'osqp':{'verbose':False}}
-
-    assert beta_1 >= 0 and beta_1 < 1 and beta_2 >= 0 and beta_2 < 1, 'beta_1 and beta_2 must be in [0,1).'
 
     # create optimization variables
     d = ca.SX.sym('d',n_p,1)
@@ -51,18 +32,42 @@ def robust_adam(
     f = cost**2
 
     # form QP solver
-    S = ca.qpsol('S','osqp',{'x':ca.vertcat(cost,d),'f':f,'g':ca.vertcat(g1,g2)},options)
+    solve_robust_descent_qp = ca.qpsol('S','osqp',{'x':ca.vertcat(cost,d),'f':f,'g':ca.vertcat(g1,g2)},options)
 
-    def parameter_update(sim,k):
+    # wrapper around S
+    def solver(sim):
 
         # get gradient matrix and form lower-bound
         j_p = ca.reshape(ca.DM(sim.j_p),-1,1)
 
         # solve
-        sol = S(lbg=ca.vertcat(-j_p,j_p))['x']
+        sol = solve_robust_descent_qp(lbg=ca.vertcat(-j_p,j_p))['x']
+
+        # extract solution
+        max_gradient_error, gradient = sol[0], sol[1:0]
+
+        return max_gradient_error, gradient
+
+    return solver
+
+def robust_adam(
+        n_models:int,
+        n_p:int,
+        alpha:float=0.001,
+        beta_1:float=0.9,
+        beta_2:float=0.999,
+        epsilon:float=1e-8,
+        jit:bool=False,
+        verbose:bool=False
+    ) -> Tuple[Callable,Callable]:
+
+    # generate robust descent solver
+    solver = robust_descent_solver(n_models=n_models,n_p=n_p,jit=jit,verbose=verbose)
+
+    def parameter_update(sim,k):
 
         # get gradient
-        g_t = sol[1:]
+        max_gradient_error, g_t = solver(sim)
 
         # get previous parameters
         m_t_1 = sim.psi['m']
@@ -88,40 +93,13 @@ def robust_adam(
 
 def robust_gradient_descent(rho,eta,n_models,n_p,log=True,jit=False,verbose=False):
 
-    # compilation options
-    if jit:
-        jit_options = {"flags": "-O3", "verbose": False, "compiler": "gcc -Ofast -march=native"}
-        options = {"jit": True, "compiler": "shell", "jit_options": jit_options}
-    else:
-        options = {}
-
-    if not verbose:
-        options = options | {'osqp':{'verbose':False}}
-
-    # create optimization variables
-    d = ca.SX.sym('d',n_p,1)
-    epsilon = ca.SX.sym('epsilon',1,1)
-
-    # create constraint functions
-    g1 = -ca.repmat(d,n_models,1) + ca.SX.ones(n_models*n_p,1)*epsilon
-    g2 = ca.repmat(d,n_models,1) + ca.SX.ones(n_models*n_p,1)*epsilon
-
-    # form objective
-    f = epsilon**2
-
-    # form QP solver
-    S = ca.qpsol('S','osqp',{'x':ca.vertcat(epsilon,d),'f':f,'g':ca.vertcat(g1,g2)},options)
+    # generate robust descent solver
+    solver = robust_descent_solver(n_models=n_models,n_p=n_p,jit=jit,verbose=verbose)
 
     def parameter_update(sim,k):
 
-        # get gradient matrix and form lower-bound
-        j_p = ca.reshape(ca.DM(sim.j_p),-1,1)
-
-        # solve
-        sol = S(lbg=ca.vertcat(-j_p,j_p))['x']
-
         # get direction
-        d = sol[1:]
+        max_gradient_error, d = solver(sim)
 
         # run GD update
         p_next = sim.p - (rho*ca.log(k+2)/(k+1)**eta)*d if log else sim.p - (rho/(k+1)**eta)*d
@@ -172,3 +150,17 @@ def minibatch_descent(rho,eta=1,log=True,batch_size=1):
         return {'j_p':ca.DM.zeros(*sim.j_p.shape)}
 
     return parameter_update, parameter_init
+
+def average_gradient_descent(rho,eta,log=True):
+
+    def parameter_update(sim,k):
+
+        # average all Jacobians
+        j_p = ca.sum2(sim.j_p) / sim.j_p.shape[1]
+
+        # gradient step
+        p_next = sim.p - (rho*ca.log(k+2)/(k+1)**eta)*j_p if log else sim.p - (rho/(k+1)**eta)*j_p
+
+        return {'p':p_next}
+
+    return parameter_update, lambda sim: {}

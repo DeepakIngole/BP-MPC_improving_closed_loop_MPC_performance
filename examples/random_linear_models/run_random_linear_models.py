@@ -98,8 +98,6 @@ with open(all_models[most_recent_index], 'rb') as f:
 
 #### LOOP THROUGH ALL MODELS ---------------------------------------------------------------------
 
-#TODO: generation of the ingredients can be done only once
-
 ALL_MODELS = []
 
 # initialize pretty table

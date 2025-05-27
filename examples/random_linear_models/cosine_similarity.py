@@ -59,11 +59,6 @@ ITERATIONS = 20
 L2_PENALTY = 1000
 L1_PENALTY = 1000
 
-# gd parameter
-RHO = 2e-4
-ETA = 0.51
-LOG = True
-
 # system identification parameters
 LAM = 0.01
 
@@ -88,7 +83,6 @@ for s in all_models:
 
 # Get the index of the most recent datetime
 most_recent_index = max(range(len(datetimes)), key=lambda i: datetimes[i])
-# print("Index of most recent file:", most_recent_index)
 
 # load using pickle
 with open(all_models[most_recent_index], 'rb') as f:
@@ -96,8 +90,6 @@ with open(all_models[most_recent_index], 'rb') as f:
 
 
 #### LOOP THROUGH ALL MODELS ---------------------------------------------------------------------
-
-#TODO: generation of the ingredients can be done only once
 
 ALL_MODELS = []
 
@@ -224,96 +216,34 @@ for i,model in enumerate(model_list):
     # store in upper-level
     upper_level.set_cost(cost,track_cost,cst_viol)
 
-    # create algorithm
-    p = upper_level.param['p']
-    j_p = upper_level.param['J_p']
-    k = upper_level.param['k']
-
-    if MODE == 'robust':
-        
-        # create system identification algorithm
-        sys_id_update, sys_id_init, _ = rls_robust(
-            dynamics=dyn,
-            n_models=N_MODELS,
-            R=1,
-            S=1,
-            delta=LAM,
-            horizon=model['dim']['horizon'],
-            lam=3,
-            theta0=theta0,
-            jit=False,
-            idx_pf=range(theta0.shape[0]))
-        
-        # create parameter update algorithm
-        # parameter_update, parameter_init = robust_gradient_descent(rho=RHO,eta=ETA,n_models=N_MODELS,n_p=p.shape[0],log=LOG)
-        parameter_update, parameter_init = robust_adam(n_models=N_MODELS,n_p=p.shape[0],alpha=1e-5)#beta_1,beta_2,epsilon
-
-    else:
-
-        # create system identification algorithm
-        sys_id_update, sys_id_init, _ = rls(
-            dynamics=dyn,
-            horizon=model['dim']['horizon'],
-            lam=LAM,
-            theta0=theta0,
-            jit=False,
-            idx_pf=range(theta0.shape[0]))    
-
-        # create update functions
-        parameter_update, parameter_init = gradient_descent(rho=RHO,eta=ETA,log=LOG)
-
-    upper_level.set_alg(
-        parameter_update=parameter_update,
-        parameter_init=parameter_init,
-        sys_id_update=sys_id_update,
-        sys_id_init=sys_id_init)
-
     # create scenario
     scenario = Scenario(dyn,mpc,upper_level)
 
     # initialize
     init_dict = {'p':p_init,'pf':theta0,'x': x0,'theta':theta0}
+    
     if use_noise:
         init_dict['w'] = model['w0']
-    # needed for compatibility
-    if MODE == 'robust':
-        init_dict['theta'] = [init_dict['theta']] * N_MODELS
 
-    # update options
+    # run nominal version
     sim_options = {'save_memory':True,'use_true_model':False,'max_k':ITERATIONS,'true_theta':np.array(model['theta_true']),'verbosity':0}
-    if MODE == 'robust':
-        sim_options['simulate_parallel_models'] = True
+    sim_nominal, _, qp_failed_nominal = scenario.simulate(options=sim_options,init=init_dict)
+    
+    # run robust version
+    init_dict['theta'] = [init_dict['theta']] * N_MODELS
+    sim_options['simulate_parallel_models'] = True
 
     # run first simulation
-    _, _, first_qp_failed = scenario.simulate(options=sim_options,init=init_dict)
+    sim_robust, _, qp_failed_robust = scenario.simulate(options=sim_options,init=init_dict)
 
-    if not first_qp_failed:
-    
-        # test closed loop
-        sim_list,_,p_best,qp_failed_closed_loop = scenario.closed_loop(options=sim_options,init=init_dict)
-
-        # compute cost and constraint violation improvement
-        cost = [sim.cost for sim in sim_list]
-        cst = [sim.cst for sim in sim_list]
-
-    if first_qp_failed:
-        qp_failed = 'First'
-    elif qp_failed_closed_loop:
-        qp_failed = 'Sim'
+    if qp_failed_nominal:
+        assert qp_failed_robust, 'qp should have failed!'
+        qp_failed = 'True'
     else:
-        qp_failed = 'Never'
+        qp_failed = 'False'
 
-    # create trajectory optimization solver
-    NLP = scenario.make_trajectory_opt(theta=model['theta_true'])
-
-    # warm start if QP has not failed
-    x_warm = sim_list[-1].x if qp_failed == 'Never' else None
-    u_warm = sim_list[-1].u if qp_failed == 'Never' else None
+    # compute cosine similarities
     
-    # solve trajectory optimization problem
-    nlp_out,nlp_solved = NLP(x0,x_warm,u_warm)
-
-    best_cost = nlp_out.cost if nlp_solved else ca.inf
 
     # add to table
     table.add_row([i, f'{ca.sum1(ca.fmax(cst[0],0))} | {ca.sum1(ca.fmax(cst[-1],0))}', f'{cost[0]} | {cost[-1]} | {cost[-1]-cost[0]}', f'{best_cost} ({best_cost-cost[-1]})', qp_failed])
