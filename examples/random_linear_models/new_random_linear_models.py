@@ -47,7 +47,7 @@ COMPILE_JAC = False
 SOLVER = 'daqp'
 
 # mode of operation (nominal or robust)
-MODE = 'robust'
+MODE = 'nominal'
 
 # number of models to simulate
 N_MODELS = 10
@@ -64,6 +64,9 @@ L1_PENALTY = 1000
 RHO = 1e-4
 ETA = 0.6
 LOG = True
+
+# system identification parameters
+LAM = 1#0.01
 
 # penalties on constraint violation (mpc)
 MPC_S_QUAD = 15
@@ -236,7 +239,7 @@ for i,model in enumerate(model_list):
             n_models=N_MODELS,
             R=1,
             S=1,
-            delta=0.01,
+            delta=LAM,
             horizon=model['dim']['horizon'],
             lam=3,
             theta0=theta0,
@@ -252,13 +255,13 @@ for i,model in enumerate(model_list):
         sys_id_update, sys_id_init, _ = rls(
             dynamics=dyn,
             horizon=model['dim']['horizon'],
-            lam=0.1,
+            lam=LAM,
             theta0=theta0,
             jit=False,
             idx_pf=range(theta0.shape[0]))    
 
         # create update functions
-        parameter_update_gd, parameter_init_gd = gradient_descent(rho=RHO,eta=ETA,log=LOG)
+        parameter_update, parameter_init = gradient_descent(rho=RHO,eta=ETA,log=LOG)
 
     upper_level.set_alg(
         parameter_update=parameter_update,
@@ -273,7 +276,9 @@ for i,model in enumerate(model_list):
     init_dict = {'p':p_init,'pf':theta0,'x': x0,'theta':theta0}
     if use_noise:
         init_dict['w'] = model['w0']
-    init_dict['theta'] = [init_dict['theta']] * N_MODELS # needed for compatibility
+    # needed for compatibility
+    if MODE == 'robust':
+        init_dict['theta'] = [init_dict['theta']] * N_MODELS
 
     # update options
     sim_options = {'save_memory':True,'use_true_model':False,'max_k':ITERATIONS,'true_theta':np.array(model['theta_true']),'verbosity':0}

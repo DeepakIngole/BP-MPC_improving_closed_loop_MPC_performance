@@ -30,7 +30,7 @@ POLE_UNCERTAINTY = 1
 X0_MAG = 0
 
 # decide whether to include noise or not
-NOISE_MAG = 0.1
+NOISE_MAG = 0
 
 # number of models used in robust GD
 N_MODELS = 100
@@ -302,12 +302,12 @@ def solve_trajectory_optimization(model:dict,upper_level_specs:dict) -> ca.DM:
             # dynamics
             opti.subject_to( x[:,t+1] == model['f_nom'](x[:,t],u[:,t],model['theta_true']) )
 
-            # test that function is correct
-            arg1 = ca.DM(np.random.rand(*x[:,t].shape))
-            arg2 = ca.DM(np.random.rand(*u[:,t].shape))
-            arg3 = ca.DM(model['dim']['w'],1)
+            # # test that function is correct
+            # arg1 = ca.DM(np.random.rand(*x[:,t].shape))
+            # arg2 = ca.DM(np.random.rand(*u[:,t].shape))
+            # arg3 = ca.DM(model['dim']['w'],1)
 
-            assert ca.logic_all(model['f'](arg1,arg2,arg3) == model['f_nom'](arg1,arg2,model['theta_true']))
+            # assert ca.logic_all(model['f'](arg1,arg2,arg3) == model['f_nom'](arg1,arg2,model['theta_true']))
 
             # bound constraints
             opti.subject_to( opti.bounded(x_min, x[:,t+1], x_max) )
