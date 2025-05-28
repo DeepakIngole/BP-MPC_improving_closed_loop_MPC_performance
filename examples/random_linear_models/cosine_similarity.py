@@ -18,8 +18,9 @@ from src.ingredients import Ingredients
 from utils.cleanup import cleanup
 from utils.cost_utils import quad_cost_and_bounds,bound2poly,param2terminal_cost,dare2param
 from src.upper_level import UpperLevel
-from utils.parameter_update import robust_gradient_descent, gradient_descent, robust_adam
-from utils.sys_id import rls, rls_robust
+from utils.parameter_update import robust_descent_solver
+from utils.sys_id import get_c_k_func, get_phi
+from utils.sample_utils import sample_unit_ball
 
 import sys
 
@@ -35,6 +36,13 @@ def clear_last_lines(n):
 cleanup()
 
 #### SETUP ---------------------------------------------------------------------------------------
+
+# decide if the cost specifications contained in model list should be
+# overwritten by the user-defined cost specifications
+USE_CUSTOM_COST_SPEC = False
+
+# if USE_CUSTOM_COST_SPEC = True, then use the following to specify the cost
+COST_SPEC = {'Q':10.0, 'R':1.0, 'x_max':5.0, 'x_min':-5.0, 'u_max':1.0, 'u_min':-1.0}
 
 # decide what to compile
 COMPILE_DYNAMICS = False
@@ -61,6 +69,8 @@ L1_PENALTY = 1000
 
 # system identification parameters
 LAM = 0.01
+DELTA = 0.01
+R = 1
 
 # penalties on constraint violation (mpc)
 MPC_S_QUAD = 15
@@ -138,15 +148,31 @@ for i,model in enumerate(model_list):
     if use_noise:
         w0 = model['w0']
 
-    # upper level cost
-    Q_true = 10*ca.DM.eye(n_x)
-    R_true = 1
+    # check if upper level cost should be taken from model list
+    if not USE_CUSTOM_COST_SPEC and model['best_cost'] is not 0:
 
-    # constraints are simple bounds on state and input
-    x_max = 5*ca.DM.ones(n_x,1)
-    x_min = -x_max
-    u_max = 1
-    u_min = -u_max
+        # if so, extract upper level cost
+        Q_true = model['cost_spec']['Q']
+        R_true = model['cost_spec']['R']
+
+        # and the constraints
+        x_max = model['cost_spec']['x_max']
+        x_min = model['cost_spec']['x_min']
+        u_max = model['cost_spec']['u_max']
+        u_min = model['cost_spec']['u_min']
+
+    # otherwise, use the specifications provided
+    else:
+
+        # cost
+        Q_true = COST_SPEC['Q']*ca.DM.eye(n_x)
+        R_true = COST_SPEC['R']
+
+        # constraints are simple bounds on state and input
+        x_max = COST_SPEC['x_max']*ca.DM.ones(n_x,1)
+        x_min = COST_SPEC['x_min']*ca.DM.ones(n_x,1)
+        u_max = COST_SPEC['u_max']
+        u_min = COST_SPEC['u_min']
 
     # parameter = terminal state cost and input cost
     c_q = ca.SX.sym('c_q',int(n_x*(n_x+1)/2),1)
@@ -228,13 +254,33 @@ for i,model in enumerate(model_list):
     # run nominal version
     sim_options = {'save_memory':True,'use_true_model':False,'max_k':ITERATIONS,'true_theta':np.array(model['theta_true']),'verbosity':0}
     sim_nominal, _, qp_failed_nominal = scenario.simulate(options=sim_options,init=init_dict)
+
+    # run robust version
+    sim_robust, _, qp_failed_robust = scenario.simulate(options=sim_options,init=init_dict)
+
+    # get phi function
+    phi = get_phi(dynamics=dyn,horizon=model['dim']['horizon'])
+
+    # compute feature vectors
+    phi_k = np.array(phi(sim_robust.x[:,:-1],sim_robust.u))
+
+    # compute output vector
+    z_k = np.array(sim_robust.x[:,1:])
+
+    # reshape
+    phi_reshaped = phi_k.reshape(n_x,scenario.dim['theta'],model['dim']['horizon'],order='F').transpose(2,1,0)
+
+    # update a and b
+    a_k = ca.DM.eye(scenario.dim['theta'])*LAM + ca.DM(np.einsum('nij,njk->ik', phi_reshaped, phi_reshaped.transpose(0,2,1)))
+
+    # compute confidence bound
+    c_k = get_c_k_func(R=R,n_theta=scenario.dim['theta'],lam=LAM,delta=DELTA,S=ca.norm2(model['theta_true']-theta0))(np.linalg.svdvals(np.array(a_k))[-1])
     
     # run robust version
-    init_dict['theta'] = [init_dict['theta']] * N_MODELS
+    init_dict['theta'] = ca.DM(theta0 + c_k*sample_unit_ball(scenario.dim['theta'],N_MODELS).T)
     sim_options['simulate_parallel_models'] = True
 
-    # run first simulation
-    sim_robust, _, qp_failed_robust = scenario.simulate(options=sim_options,init=init_dict)
+    
 
     if qp_failed_nominal:
         assert qp_failed_robust, 'qp should have failed!'
@@ -243,7 +289,7 @@ for i,model in enumerate(model_list):
         qp_failed = 'False'
 
     # compute cosine similarities
-    
+
 
     # add to table
     table.add_row([i, f'{ca.sum1(ca.fmax(cst[0],0))} | {ca.sum1(ca.fmax(cst[-1],0))}', f'{cost[0]} | {cost[-1]} | {cost[-1]-cost[0]}', f'{best_cost} ({best_cost-cost[-1]})', qp_failed])

@@ -1,5 +1,4 @@
 import casadi as ca
-import numpy as np
 from typing import Callable, Tuple
 from src.sim_var import SimVar
 
