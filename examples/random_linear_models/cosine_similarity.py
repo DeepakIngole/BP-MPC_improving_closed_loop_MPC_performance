@@ -6,7 +6,7 @@ import numpy as np
 from glob import glob
 from datetime import datetime
 import pickle
-from prettytable import PrettyTable
+from prettytable import PrettyTable, NONE
 
 # add root to python path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')))
@@ -18,7 +18,7 @@ from src.ingredients import Ingredients
 from utils.cleanup import cleanup
 from utils.cost_utils import quad_cost_and_bounds,bound2poly,param2terminal_cost,dare2param
 from src.upper_level import UpperLevel
-from utils.parameter_update import robust_descent_solver
+from utils.parameter_update import get_robust_descent_solver
 from utils.sys_id import get_c_k_func, get_phi
 from utils.sample_utils import sample_unit_ball
 
@@ -80,7 +80,10 @@ MPC_S_LIN = 25
 #### GET THE MODELS -----------------------------------------------------------------------------
 
 # load latest model from .models directory
-all_models = glob("./.models/*.pkl")
+cwd = os.getcwd()
+main_dir = '/'.join(cwd.split('/')[:-2])
+models_dir = os.path.join(main_dir, '.models')
+all_models = glob(models_dir + "/*.pkl")
 
 # Extract the datetime from the string
 datetimes = []
@@ -103,9 +106,22 @@ with open(all_models[most_recent_index], 'rb') as f:
 
 ALL_MODELS = []
 
-# initialize pretty table
-table = PrettyTable()
-table.field_names = ["MODEL", "Constraint violation (first-last)", "Cost (first-last-increment)", "Best achievable cost", "QP failed"]
+# setup printout
+columns = [
+    ("MODEL", 10),
+    ("QP failed", 10),
+    ("Cosine similarity nominal", 25),
+    ("Cosine similarity robust", 25),
+]
+
+# Create a format string based on column widths
+format_str = " | ".join(f"{{:^{width}}}" for _, width in columns)
+
+# Print header
+header = format_str.format(*(name for name, _ in columns))
+separator = "-+-".join("-" * width for _, width in columns)
+print(header)
+print(separator)
 
 # loop through all models
 for i,model in enumerate(model_list):
@@ -149,7 +165,7 @@ for i,model in enumerate(model_list):
         w0 = model['w0']
 
     # check if upper level cost should be taken from model list
-    if not USE_CUSTOM_COST_SPEC and model['best_cost'] is not 0:
+    if not USE_CUSTOM_COST_SPEC and model['best_cost'] != 0:
 
         # if so, extract upper level cost
         Q_true = model['cost_spec']['Q']
@@ -245,61 +261,67 @@ for i,model in enumerate(model_list):
     # create scenario
     scenario = Scenario(dyn,mpc,upper_level)
 
+    # construct simulation options
+    sim_options = {'simulate_parallel_models': True, 'save_memory': True, 'use_true_model': False, 'max_k': ITERATIONS,
+                   'true_theta': np.array(model['theta_true']), 'verbosity': 0}
+
+    # compute confidence bound
+    c_k = get_c_k_func(R=R, n_theta=scenario.dim['theta'], lam=LAM, delta=DELTA,
+                       S=ca.norm_2(model['theta_true'] - theta0))(LAM)
+
+    # initialize theta: first add randomized values
+    theta_init_random = ca.DM(theta0 + c_k * sample_unit_ball(scenario.dim['theta'], N_MODELS).T)
+
+    # add nominal model and true model
+    theta_init = ca.horzcat(theta_init_random,theta0,model['theta_true'])
+
     # initialize
-    init_dict = {'p':p_init,'pf':theta0,'x': x0,'theta':theta0}
-    
+    init_dict = {'p': p_init, 'pf': theta0, 'x': x0, 'theta': theta_init}
     if use_noise:
         init_dict['w'] = model['w0']
 
-    # run nominal version
-    sim_options = {'save_memory':True,'use_true_model':False,'max_k':ITERATIONS,'true_theta':np.array(model['theta_true']),'verbosity':0}
-    sim_nominal, _, qp_failed_nominal = scenario.simulate(options=sim_options,init=init_dict)
-
     # run robust version
-    sim_robust, _, qp_failed_robust = scenario.simulate(options=sim_options,init=init_dict)
+    sim, _, qp_failed = scenario.simulate(options=sim_options,init=init_dict)
 
-    # get phi function
-    phi = get_phi(dynamics=dyn,horizon=model['dim']['horizon'])
+    # # get phi function
+    # phi = get_phi(dynamics=dyn,horizon=model['dim']['horizon'])
+    #
+    # # compute feature vectors
+    # phi_k = np.array(phi(sim.x[:,:-1],sim.u))
+    #
+    # # compute output vector
+    # z_k = np.array(sim.x[:,1:])
+    #
+    # # reshape
+    # phi_reshaped = phi_k.reshape(n_x,scenario.dim['theta'],model['dim']['horizon'],order='F').transpose(2,1,0)
+    #
+    # # update a and b
+    # a_k = ca.DM.eye(scenario.dim['theta'])*LAM + ca.DM(np.einsum('nij,njk->ik', phi_reshaped, phi_reshaped.transpose(0,2,1)))
 
-    # compute feature vectors
-    phi_k = np.array(phi(sim_robust.x[:,:-1],sim_robust.u))
+    # # compute confidence bound
+    # c_k = get_c_k_func(R=R, n_theta=scenario.dim['theta'], lam=LAM, delta=DELTA,
+    #                    S=ca.norm_2(model['theta_true'] - theta0))(np.linalg.svdvals(np.array(a_k))[-1])
 
-    # compute output vector
-    z_k = np.array(sim_robust.x[:,1:])
+    # compute gradient
+    j_p = scenario.upper_level.j_cost(sim)
 
-    # reshape
-    phi_reshaped = phi_k.reshape(n_x,scenario.dim['theta'],model['dim']['horizon'],order='F').transpose(2,1,0)
+    # get robust descent solver
+    robust_descent_solver = get_robust_descent_solver(n_models=N_MODELS, n_p=scenario.dim['p'])
 
-    # update a and b
-    a_k = ca.DM.eye(scenario.dim['theta'])*LAM + ca.DM(np.einsum('nij,njk->ik', phi_reshaped, phi_reshaped.transpose(0,2,1)))
-
-    # compute confidence bound
-    c_k = get_c_k_func(R=R,n_theta=scenario.dim['theta'],lam=LAM,delta=DELTA,S=ca.norm2(model['theta_true']-theta0))(np.linalg.svdvals(np.array(a_k))[-1])
-    
-    # run robust version
-    init_dict['theta'] = ca.DM(theta0 + c_k*sample_unit_ball(scenario.dim['theta'],N_MODELS).T)
-    sim_options['simulate_parallel_models'] = True
-
-    
-
-    if qp_failed_nominal:
-        assert qp_failed_robust, 'qp should have failed!'
-        qp_failed = 'True'
-    else:
-        qp_failed = 'False'
+    # extract gradients
+    j_p_list = ca.horzsplit(j_p,1)
+    _,j_p_robust = robust_descent_solver(ca.hcat(j_p_list[:-2]))
+    j_p_nominal = np.array(j_p_list[-2]).squeeze()
+    j_p_true = np.array(j_p_list[-1]).squeeze()
 
     # compute cosine similarities
+    def cosine_similarity(v,w):
+        return np.dot(v,w) / ( np.linalg.norm(v) * np.linalg.norm(w) )
+    cos_nominal = cosine_similarity(j_p_true,j_p_nominal)
+    cos_robust = cosine_similarity(j_p_true, np.array(j_p_robust).squeeze())
 
-
-    # add to table
-    table.add_row([i, f'{ca.sum1(ca.fmax(cst[0],0))} | {ca.sum1(ca.fmax(cst[-1],0))}', f'{cost[0]} | {cost[-1]} | {cost[-1]-cost[0]}', f'{best_cost} ({best_cost-cost[-1]})', qp_failed])
-
-    # clear previous rows
-    if i > 0:
-        clear_last_lines(4+i)
-    
-    # Print the table
-    print(table)
+    # Print formatted row
+    print(format_str.format(i, str(qp_failed), cos_nominal, cos_robust))
 
 # save table with results
 print('me')

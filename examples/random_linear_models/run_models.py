@@ -32,6 +32,8 @@ def clear_last_lines(n):
         sys.stdout.write('\x1b[2K')  # ANSI escape code to clear the line
     sys.stdout.flush()
 
+# TODO: get upper level cost from model list (take from cosine_similarity.py)
+
 # cleanup jit files
 cleanup()
 

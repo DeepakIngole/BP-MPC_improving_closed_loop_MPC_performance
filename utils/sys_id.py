@@ -12,7 +12,13 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from src.sim_var import SimVar
 from src.dynamics import Dynamics
 
-def get_c_k_func(R:float,n_theta:int,lam:float,delta:float,S:float) -> Callable[[float],float]:
+def get_c_k_func(
+        R:float,
+        n_theta:int,
+        lam:float,
+        delta:float,
+        S:float
+    ) -> Callable[[Union[float,ca.DM,np.ndarray]],Union[float,ca.DM,np.ndarray]]:
     """
     Creates a function to compute the confidence bound c_k as a function of beta.
     Parameters:

@@ -1,14 +1,15 @@
 import casadi as ca
-from typing import Callable, Tuple
+from typing import Callable, Tuple, Union
 from src.sim_var import SimVar
+from numpy import ndarray
 
 
-def robust_descent_solver(
+def get_robust_descent_solver(
         n_models:int,
         n_p:int,
         jit:bool=False,
         verbose:bool=False
-    ) -> Callable[[SimVar],Tuple[ca.DM,ca.DM]]:
+    ) -> Callable[[Union[ndarray,ca.DM]],Tuple[ca.DM,ca.DM]]:
     """
     Creates a robust descent QP solver for parameter update in multi-model settings.
 
@@ -59,12 +60,12 @@ def robust_descent_solver(
     solve_robust_descent_qp = ca.qpsol('S','osqp',{'x':ca.vertcat(cost,d),'f':f,'g':ca.vertcat(g1,g2)},options)
 
     # wrapper around S
-    def solver(sim:SimVar) -> Tuple[ca.DM, ca.DM]:
+    def solver(j_p:Union[ndarray,ca.DM]) -> Tuple[ca.DM, ca.DM]:
         """
         Solves a robust descent quadratic program (QP) to compute the maximum gradient error and the gradient vector.
 
         Args:
-            sim (SimVar): Simulation variables containing the gradient matrix `j_p`.
+            j_p (np.ndarray or ca.DM): gradient matrix `j_p`
 
         Returns:
             Tuple[ca.DM, ca.DM]: 
@@ -73,13 +74,13 @@ def robust_descent_solver(
         """
 
         # get gradient matrix and form lower-bound
-        j_p = ca.reshape(ca.DM(sim.j_p),-1,1)
+        j_p_reshaped = ca.reshape(ca.DM(j_p),-1,1)
 
         # solve
-        sol = solve_robust_descent_qp(lbg=ca.vertcat(-j_p,j_p))['x']
+        sol = solve_robust_descent_qp(lbg=ca.vertcat(-j_p_reshaped,j_p_reshaped))['x']
 
         # extract solution
-        max_gradient_error, gradient = sol[0], sol[1:0]
+        max_gradient_error, gradient = sol[0], sol[1:]
 
         return max_gradient_error, gradient
 
@@ -117,7 +118,7 @@ def robust_adam(
     """
 
     # generate robust descent solver
-    solver = robust_descent_solver(n_models=n_models,n_p=n_p,jit=jit,verbose=verbose)
+    solver = get_robust_descent_solver(n_models=n_models,n_p=n_p,jit=jit,verbose=verbose)
 
     def parameter_update(sim,k):
 
@@ -158,7 +159,7 @@ def robust_gradient_descent(rho,eta,n_models,n_p,log=True,jit=False,verbose=Fals
     """
 
     # generate robust descent solver
-    solver = robust_descent_solver(n_models=n_models,n_p=n_p,jit=jit,verbose=verbose)
+    solver = get_robust_descent_solver(n_models=n_models,n_p=n_p,jit=jit,verbose=verbose)
 
     def parameter_update(sim:SimVar,k:int) -> dict:
         """
