@@ -24,7 +24,7 @@ POLE_RANGE = (-5.0,1.0)
 HORIZON = 20
 
 # uncertainty on poles
-POLE_UNCERTAINTY = 1
+POLE_UNCERTAINTY = 3
 
 # how spread out the initial condition is
 X0_MAG = 0
@@ -221,7 +221,8 @@ def generate_single(
 
     # create new system with uncertainty by sampling new poles within the specified
     # uncertainty range
-    poles_uncertain = pole_uncertainty*(np.ones(n_x)+2*np.random.rand(n_x))
+    poles_uncertain_unit = np.ones(n_x)+2*np.random.rand(n_x)
+    poles_uncertain = pole_uncertainty/np.linalg.norm(poles_uncertain_unit) * poles_uncertain_unit
     A_uncertain,B_uncertain,_ = poles_to_linear_sys(poles=poles_uncertain,sampling_time=sampling_time)
     theta0 = ca.DM(ca.vertcat(ca.vec(A_uncertain),ca.vec(B_uncertain)))
 

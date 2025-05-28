@@ -16,21 +16,11 @@ from src.dynamics import Dynamics
 from src.qp import QP
 from src.ingredients import Ingredients
 from utils.cleanup import cleanup
-from utils.cost_utils import quad_cost_and_bounds,bound2poly,param2terminal_cost,dare2param
+from utils.cost_utils import quad_cost_and_bounds, bound2poly, param2terminal_cost, dare2param, quad_cost_2_param
 from src.upper_level import UpperLevel
 from utils.parameter_update import get_robust_descent_solver
 from utils.sys_id import get_c_k_func, get_phi
 from utils.sample_utils import sample_unit_ball
-
-import sys
-
-def clear_last_lines(n):
-    for _ in range(n):
-        # Move cursor up one line
-        sys.stdout.write('\x1b[1A')  # ANSI escape code to move cursor up
-        # Clear the line
-        sys.stdout.write('\x1b[2K')  # ANSI escape code to clear the line
-    sys.stdout.flush()
 
 # cleanup jit files
 cleanup()
@@ -64,13 +54,13 @@ MPC_HORIZON = 10
 ITERATIONS = 20
 
 # penalties on constraint violation (closed-loop)
-L2_PENALTY = 1000
-L1_PENALTY = 1000
+L2_PENALTY = 0
+L1_PENALTY = 0
 
 # system identification parameters
-LAM = 0.01
+LAM = 0.1
 DELTA = 0.01
-R = 1
+R = 0.1
 
 # penalties on constraint violation (mpc)
 MPC_S_QUAD = 15
@@ -80,7 +70,7 @@ MPC_S_LIN = 25
 #### GET THE MODELS -----------------------------------------------------------------------------
 
 # load latest model from .models directory
-cwd = os.getcwd()
+cwd = os.path.dirname(os.path.abspath(__file__))
 main_dir = '/'.join(cwd.split('/')[:-2])
 models_dir = os.path.join(main_dir, '.models')
 all_models = glob(models_dir + "/*.pkl")
@@ -112,6 +102,7 @@ columns = [
     ("QP failed", 10),
     ("Cosine similarity nominal", 25),
     ("Cosine similarity robust", 25),
+    ('c_k', 10)
 ]
 
 # Create a format string based on column widths
@@ -191,21 +182,22 @@ for i,model in enumerate(model_list):
         u_min = COST_SPEC['u_min']
 
     # parameter = terminal state cost and input cost
-    c_q = ca.SX.sym('c_q',int(n_x*(n_x+1)/2),1)
+    c_qx = ca.SX.sym('c_qx',int(n_x*(n_x+1)/2),1) 
+    c_qn = ca.SX.sym('c_q',int(n_x*(n_x+1)/2),1)
     c_r = ca.SX.sym('c_r',1,1)
 
     # stage cost (state)
-    Qx = [Q_true] * (MPC_HORIZON-1)
+    Qx = [param2terminal_cost(c_qn) + 0.01*ca.SX.eye(n_x)] * (MPC_HORIZON-1)
 
     # stage cost (input)
     Ru = c_r**2 + 1e-6
 
     # create parameter
-    p = ca.vcat([c_q,c_r])
+    p = ca.vcat([c_qx,c_qn,c_r])
     pf = dyn_dict['theta']
 
     # MPC terminal cost
-    Qn = param2terminal_cost(c_q) + 0.01*ca.SX.eye(n_x)
+    Qn = param2terminal_cost(c_qn) + 0.01*ca.SX.eye(n_x)
 
     # append to Qx
     Qx.append(Qn)
@@ -239,7 +231,8 @@ for i,model in enumerate(model_list):
     B = dyn.B_nom(ca.DM(n_x,1),ca.DM(n_u,1),theta0)
 
     # compute terminal cost initialization
-    p_init = ca.vertcat(dare2param(A,B,Q_true,R_true),1e-1)#ca.vertcat(ca.DM.ones(p.shape[0]-1,1)*1e-3,1)#
+    # p_init = ca.vertcat(dare2param(A,B,Q_true,R_true),1e-1)#ca.vertcat(ca.DM.ones(p.shape[0]-1,1)*1e-3,1)#
+    p_init = ca.vertcat(quad_cost_2_param(Q_true),quad_cost_2_param(Q_true),R_true)
 
     # extract closed-loop variables for upper level
     x_cl = ca.vec(upper_level.param['x_cl'])
@@ -321,7 +314,7 @@ for i,model in enumerate(model_list):
     cos_robust = cosine_similarity(j_p_true, np.array(j_p_robust).squeeze())
 
     # Print formatted row
-    print(format_str.format(i, str(qp_failed), cos_nominal, cos_robust))
+    print(format_str.format(i, str(qp_failed), cos_nominal, cos_robust, str(c_k)))
 
 # save table with results
 print('me')

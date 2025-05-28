@@ -1,7 +1,12 @@
 import casadi as ca
 import numpy as np
-from utils.linear import poles_to_linear_sys
 from typing import Tuple
+import sys, os
+
+# add root to python path
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')))
+
+from utils.linear import poles_to_linear_sys
 
 def dynamics(
         Ts:float=0.1,
@@ -49,7 +54,7 @@ def dynamics(
     poles = np.random.rand(n_x)*(pole_mag[1]-pole_mag[0]) + np.ones(n_x)*pole_mag[0]
 
     # generate random discrete-time system
-    A,B,eig_A = poles_to_linear_sys(poles=poles,Ts=Ts)
+    A,B,eig_A = poles_to_linear_sys(poles=poles,sampling_time=Ts)
 
     if verbose:
         print(f'Generated poles: {poles}')
