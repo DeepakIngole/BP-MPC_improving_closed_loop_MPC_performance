@@ -193,8 +193,9 @@ for i,model in enumerate(model_list):
     Ru = c_r**2 + 1e-6
 
     # create parameter
-    p = ca.vcat([c_qx,c_qn,c_r])
-    pf = dyn_dict['theta']
+    # p = ca.vcat([c_qx,c_qn,c_r])
+    # pf = dyn_dict['theta']
+    p = ca.vcat([c_qx,c_qn,c_r,dyn_dict['theta']])
 
     # MPC terminal cost
     Qn = param2terminal_cost(c_qn) + 0.01*ca.SX.eye(n_x)
@@ -221,18 +222,20 @@ for i,model in enumerate(model_list):
                 'solver':SOLVER}
 
     # create MPC
-    mpc = QP(ingredients=ing,p=p,pf=pf,options=qp_options)
+    # mpc = QP(ingredients=ing,p=p,pf=pf,options=qp_options)
+    mpc = QP(ingredients=ing,p=p,options=qp_options)
 
     # create upper level
-    upper_level = UpperLevel(p=p,pf=pf,horizon=model['dim']['horizon'],mpc=mpc)
+    # upper_level = UpperLevel(p=p,pf=pf,horizon=model['dim']['horizon'],mpc=mpc)
+    upper_level = UpperLevel(p=p,horizon=model['dim']['horizon'],mpc=mpc)
 
     # extract linearized dynamics at the origin
     A = dyn.A_nom(ca.DM(n_x,1),ca.DM(n_u,1),theta0)
     B = dyn.B_nom(ca.DM(n_x,1),ca.DM(n_u,1),theta0)
 
     # compute terminal cost initialization
-    # p_init = ca.vertcat(dare2param(A,B,Q_true,R_true),1e-1)#ca.vertcat(ca.DM.ones(p.shape[0]-1,1)*1e-3,1)#
-    p_init = ca.vertcat(quad_cost_2_param(Q_true),quad_cost_2_param(Q_true),R_true)
+    # p_init = ca.vertcat(quad_cost_2_param(Q_true),quad_cost_2_param(Q_true),R_true)
+    p_init = ca.vertcat(quad_cost_2_param(Q_true),quad_cost_2_param(Q_true),R_true,theta0)
 
     # extract closed-loop variables for upper level
     x_cl = ca.vec(upper_level.param['x_cl'])
@@ -303,9 +306,18 @@ for i,model in enumerate(model_list):
 
     # extract gradients
     j_p_list = ca.horzsplit(j_p,1)
+    j_x_list = ca.horzsplit(sim.j_x,1)
+
+    # get robust gradient
     _,j_p_robust = robust_descent_solver(ca.hcat(j_p_list[:-2]))
+
+    # get nominal gradient
     j_p_nominal = np.array(j_p_list[-2]).squeeze()
+    j_x_nominal = np.array(j_x_list[-2]).squeeze()
+
+    # get true gradient
     j_p_true = np.array(j_p_list[-1]).squeeze()
+    j_x_true = np.array(j_x_list[-1]).squeeze()
 
     # compute cosine similarities
     def cosine_similarity(v,w):

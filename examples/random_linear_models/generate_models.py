@@ -21,16 +21,16 @@ NX = 4
 POLE_RANGE = (-5.0,1.0)
 
 # horizons
-HORIZON = 20
+HORIZON = 50
 
 # uncertainty on poles
 POLE_UNCERTAINTY = 3
 
 # how spread out the initial condition is
-X0_MAG = 0
+X0_MAG = 1
 
 # decide whether to include noise or not
-NOISE_MAG = 0
+NOISE_MAG = 0.1
 
 # number of models used in robust GD
 N_MODELS = 100
@@ -39,7 +39,7 @@ N_MODELS = 100
 FEASIBLE_ONLY = True
 
 # upper-level cost specification (meaningful only if FEASIBLE_ONLY = True)
-UPPER_LEVEL_SPECS = {'Q':10*ca.DM.eye(NX),'R':1,'x_max':5*ca.DM.ones(NX,1),'x_min':-5*ca.DM.ones(NX,1),'u_max':1,'u_min':-1}
+UPPER_LEVEL_SPECS = {'Q':10*ca.DM.eye(NX),'R':1,'x_max':10*ca.DM.ones(NX,1),'x_min':-10*ca.DM.ones(NX,1),'u_max':1,'u_min':-1}
 
 
 def generate_multiple(
