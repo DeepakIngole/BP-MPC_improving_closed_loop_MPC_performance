@@ -87,6 +87,45 @@ def get_robust_descent_solver(
     return solver
 
 
+def adam(
+        alpha: float = 0.001,
+        beta_1: float = 0.9,
+        beta_2: float = 0.999,
+        epsilon: float = 1e-8,
+    ) -> Tuple[Callable, Callable]:
+    """
+    Standard Adam optimizer.
+    Args:
+        n_p (int): Number of parameters to optimize.
+        alpha (float, optional): Learning rate for the Adam optimizer. Default is 0.001.
+        beta_1 (float, optional): Exponential decay rate for the first moment estimates. Default is 0.9.
+        beta_2 (float, optional): Exponential decay rate for the second moment estimates. Default is 0.999.
+        epsilon (float, optional): Small constant for numerical stability. Default is 1e-8.
+        jit (bool, optional): Whether to use just-in-time compilation for the solver. Default is False.
+        verbose (bool, optional): Whether to print verbose output during optimization. Default is False.
+    Returns:
+        Tuple[Callable, Callable]:
+            - parameter_update: A function that performs a parameter update given the simulation state and iteration index.
+            - parameter_init: A function that initializes the optimizer's internal state (moments) given the simulation state.
+    Notes:
+        - The returned `parameter_update` function expects a simulation object (`sim`) and the current iteration index (`k`).
+        - The returned `parameter_init` function initializes the first and second moment vectors to zeros with the same shape as the parameters.
+    """
+
+    def parameter_update(sim, k):
+
+        # run Adam update
+        p_next, m_t, v_t = adam_rule(p=sim.p, m_t_1=sim.psi['m'], v_t_1=sim.psi['v'], g_t=sim.j_p,
+                                     k=k, alpha=alpha, beta_1=beta_1, beta_2=beta_2, epsilon=epsilon)
+
+        return {'p': p_next, 'psi': {'m': m_t, 'v': v_t}}
+
+    # no initialization for psi
+    parameter_init = lambda sim: {'m': ca.DM(*sim.p.shape), 'v': ca.DM(*sim.p.shape)}
+
+    return parameter_update, parameter_init
+
+
 def robust_adam(
         n_models:int,
         n_p:int,

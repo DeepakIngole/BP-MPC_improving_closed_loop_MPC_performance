@@ -19,7 +19,7 @@ from src.ingredients import Ingredients
 from utils.cleanup import cleanup
 from utils.cost_utils import quad_cost_and_bounds,bound2poly,param2terminal_cost,quad_cost_2_param
 from src.upper_level import UpperLevel
-from utils.parameter_update import robust_gradient_descent, gradient_descent
+from utils.parameter_update import robust_gradient_descent, gradient_descent, robust_adam, adam
 from utils.sys_id import rls, rls_robust
 from utils.sample_utils import sample_unit_ball
 
@@ -52,11 +52,17 @@ N_MODELS = 10
 
 # horizons
 MPC_HORIZON = 5
-ITERATIONS = 50
+ITERATIONS = 100
 
 # penalties on constraint violation (closed-loop)
 L2_PENALTY = 100
 L1_PENALTY = 100
+
+# Adam parameters
+ADAM_ALPHA = 0.01
+ADAM_EPSILON = 1e-7
+ADAM_BETA_1 = 0.6
+ADAM_BETA_2 = 0.9
 
 # gd parameter
 RHO = 1e-3
@@ -66,10 +72,15 @@ LOG = True
 # system identification parameters
 LAM = 1
 DELTA = 0.01
+R = 1
+S = 1
 
 # penalties on constraint violation (mpc)
 MPC_S_QUAD = 15
 MPC_S_LIN = 25
+
+# update algorithm (options: 'Adam', 'gd')
+UPDATE_ALGORITHM = 'Adam'
 
 
 #### GET THE MODELS -----------------------------------------------------------------------------
@@ -270,8 +281,8 @@ for i,model in enumerate(model_list):
         sys_id_update, sys_id_init, _ = rls_robust(
             dynamics=dyn,
             n_models=N_MODELS,
-            R=1,
-            S=1,
+            R=R,
+            S=S,
             delta=DELTA,
             horizon=model['dim']['horizon'],
             lam=LAM,
@@ -280,9 +291,15 @@ for i,model in enumerate(model_list):
             idx_pf=range(theta0.shape[0]))
         
         # create parameter update algorithm
-        parameter_update, parameter_init = robust_gradient_descent(rho=RHO,eta=ETA,n_models=N_MODELS,n_p=p.shape[0],log=LOG)
+        if UPDATE_ALGORITHM == 'gd':
+            parameter_update, parameter_init = robust_gradient_descent(rho=RHO, eta=ETA, n_models=N_MODELS, n_p=p.shape[0],log=LOG)
+        elif UPDATE_ALGORITHM == 'Adam':
+            parameter_update, parameter_init = robust_adam(n_models=N_MODELS, n_p=p.shape[0], alpha=ADAM_ALPHA,
+                                                           beta_1=ADAM_BETA_1, beta_2=ADAM_BETA_2, epsilon=ADAM_EPSILON)
+        else:
+            raise Exception('Unknown UPDATE_ALGORITHM')
 
-    else:
+    elif MODE == 'nominal':
 
         # create system identification algorithm
         sys_id_update, sys_id_init, _ = rls(
@@ -291,10 +308,19 @@ for i,model in enumerate(model_list):
             lam=LAM,
             theta0=theta0,
             jit=False,
-            idx_pf=range(theta0.shape[0]))    
+            idx_pf=range(theta0.shape[0]))
 
         # create update functions
-        parameter_update, parameter_init = gradient_descent(rho=RHO,eta=ETA,log=LOG)
+        if UPDATE_ALGORITHM == 'gd':
+            parameter_update, parameter_init = gradient_descent(rho=RHO, eta=ETA, log=LOG)
+        elif UPDATE_ALGORITHM == 'Adam':
+            parameter_update, parameter_init = adam(alpha=ADAM_ALPHA, beta_1=ADAM_BETA_1, beta_2=ADAM_BETA_2,
+                                                    epsilon=ADAM_EPSILON)
+        else:
+            raise Exception('Unknown UPDATE_ALGORITHM')
+
+    else:
+        raise Exception('Unknown MODE')
 
     upper_level.set_alg(
         parameter_update=parameter_update,
@@ -316,10 +342,12 @@ for i,model in enumerate(model_list):
         c_k_0 = sys_id_init()['c']
 
         # sample random models
-        init_dict['theta'] = ca.horzsplit_n(ca.DM(init_dict['theta'] + c_k_0 * sample_unit_ball(scenario.dim['theta'], N_MODELS).T))
+        init_dict['theta'] = ca.horzsplit_n(
+            ca.DM(init_dict['theta'] + c_k_0 * sample_unit_ball(scenario.dim['theta'], N_MODELS).T))
 
     # update options
-    sim_options = {'save_memory':True,'use_true_model':False,'max_k':ITERATIONS,'true_theta':np.array(model['theta_true']),'verbosity':0}
+    sim_options = {'save_memory': True, 'use_true_model': False, 'max_k': ITERATIONS,
+                   'true_theta': np.array(model['theta_true']), 'verbosity': 0}
     if MODE == 'robust':
         sim_options['simulate_parallel_models'] = True
 
@@ -360,21 +388,6 @@ for i,model in enumerate(model_list):
         best_cost = nlp_out.cost if nlp_solved else ca.inf
 
         # add to table
-        print(format_str.format(i, f'{ca.sum1(ca.fmax(cst[0],0))} | {ca.sum1(ca.fmax(cst[-1],0))}', f'{cost[0]} | {cost[-1]} | {cost[-1]-cost[0]}', f'{best_cost} ({best_cost-cost[-1]})', qp_failed, f'{c_k[1]} | {c_k[-1]}'))
-
-# save table with results
-print('me')
-
-# all_models[most_recent_index]
-
-# # dump model to file
-# with open(file_name, 'wb') as f:
-#     pickle.dump(model_list, f)
-
-# while True:
-
-#     # get cost
-#     cost,track_cost,cst_viol = scenario.upper_level.cost(sim)
-
-#     # run a single update
-#     sim.j_p = scenario._mapped['j_cost'](sim)
+        print(format_str.format(i, f'{ca.sum1(ca.fmax(cst[0], 0))} | {ca.sum1(ca.fmax(cst[-1], 0))}',
+                                f'{cost[0]} | {cost[-1]} | {cost[-1] - cost[0]}',
+                                f'{best_cost} ({best_cost - cost[-1]})', qp_failed, f'{c_k[1]} | {c_k[-1]}'))

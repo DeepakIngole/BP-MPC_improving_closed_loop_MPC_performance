@@ -278,25 +278,6 @@ for i,model in enumerate(model_list):
     # run robust version
     sim, _, qp_failed = scenario.simulate(options=sim_options,init=init_dict)
 
-    # # get phi function
-    # phi = get_phi(dynamics=dyn,horizon=model['dim']['horizon'])
-    #
-    # # compute feature vectors
-    # phi_k = np.array(phi(sim.x[:,:-1],sim.u))
-    #
-    # # compute output vector
-    # z_k = np.array(sim.x[:,1:])
-    #
-    # # reshape
-    # phi_reshaped = phi_k.reshape(n_x,scenario.dim['theta'],model['dim']['horizon'],order='F').transpose(2,1,0)
-    #
-    # # update a and b
-    # a_k = ca.DM.eye(scenario.dim['theta'])*LAM + ca.DM(np.einsum('nij,njk->ik', phi_reshaped, phi_reshaped.transpose(0,2,1)))
-
-    # # compute confidence bound
-    # c_k = get_c_k_func(R=R, n_theta=scenario.dim['theta'], lam=LAM, delta=DELTA,
-    #                    S=ca.norm_2(model['theta_true'] - theta0))(np.linalg.svdvals(np.array(a_k))[-1])
-
     # compute gradient
     j_p = scenario.upper_level.j_cost(sim)
 
@@ -327,20 +308,3 @@ for i,model in enumerate(model_list):
 
     # Print formatted row
     print(format_str.format(i, str(qp_failed), cos_nominal, cos_robust, str(c_k)))
-
-# save table with results
-print('me')
-
-# all_models[most_recent_index]
-
-# # dump model to file
-# with open(file_name, 'wb') as f:
-#     pickle.dump(model_list, f)
-
-# while True:
-
-#     # get cost
-#     cost,track_cost,cst_viol = scenario.upper_level.cost(sim)
-
-#     # run a single update
-#     sim.j_p = scenario._mapped['j_cost'](sim)
