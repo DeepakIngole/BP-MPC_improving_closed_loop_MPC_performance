@@ -179,7 +179,7 @@ def robust_gradient_descent(rho,eta,n_models,n_p,log=True,jit=False,verbose=Fals
         """
 
         # get direction
-        max_gradient_error, d = solver(sim)
+        max_gradient_error, d = solver(sim.j_p)
 
         # run GD update
         p_next = gd_rule(p=sim.p,j_p=d,k=k,rho=rho,eta=eta,log=log)

@@ -17,27 +17,23 @@ from src.dynamics import Dynamics
 from src.qp import QP
 from src.ingredients import Ingredients
 from utils.cleanup import cleanup
-from utils.cost_utils import quad_cost_and_bounds,bound2poly,param2terminal_cost,dare2param
+from utils.cost_utils import quad_cost_and_bounds,bound2poly,param2terminal_cost,quad_cost_2_param
 from src.upper_level import UpperLevel
 from utils.parameter_update import robust_gradient_descent, gradient_descent
 from utils.sys_id import rls, rls_robust
-
-import sys
-
-def clear_last_lines(n):
-    for _ in range(n):
-        # Move cursor up one line
-        sys.stdout.write('\x1b[1A')  # ANSI escape code to move cursor up
-        # Clear the line
-        sys.stdout.write('\x1b[2K')  # ANSI escape code to clear the line
-    sys.stdout.flush()
-
-# TODO: get upper level cost from model list (take from cosine_similarity.py)
+from utils.sample_utils import sample_unit_ball
 
 # cleanup jit files
 cleanup()
 
 #### SETUP ---------------------------------------------------------------------------------------
+
+# decide if the cost specifications contained in model list should be
+# overwritten by the user-defined cost specifications
+USE_CUSTOM_COST_SPEC = False
+
+# if USE_CUSTOM_COST_SPEC = True, then use the following to specify the cost
+COST_SPEC = {'Q':10.0, 'R':1.0, 'x_max':5.0, 'x_min':-5.0, 'u_max':1.0, 'u_min':-1.0}
 
 # decide what to compile
 COMPILE_DYNAMICS = False
@@ -55,20 +51,21 @@ MODE = 'nominal'
 N_MODELS = 10
 
 # horizons
-MPC_HORIZON = 10
-ITERATIONS = 20
+MPC_HORIZON = 5
+ITERATIONS = 50
 
 # penalties on constraint violation (closed-loop)
-L2_PENALTY = 1000
-L1_PENALTY = 1000
+L2_PENALTY = 100
+L1_PENALTY = 100
 
 # gd parameter
-RHO = 1e-4
-ETA = 0.6
+RHO = 1e-3
+ETA = 0.51
 LOG = True
 
 # system identification parameters
-LAM = 1#0.01
+LAM = 1
+DELTA = 0.01
 
 # penalties on constraint violation (mpc)
 MPC_S_QUAD = 15
@@ -78,7 +75,10 @@ MPC_S_LIN = 25
 #### GET THE MODELS -----------------------------------------------------------------------------
 
 # load latest model from .models directory
-all_models = glob("./.models/*.pkl")
+cwd = os.path.dirname(os.path.abspath(__file__))
+main_dir = '/'.join(cwd.split('/')[:-2])
+models_dir = os.path.join(main_dir, '.models')
+all_models = glob(models_dir + "/*.pkl")
 
 # Extract the datetime from the string
 datetimes = []
@@ -90,8 +90,7 @@ for s in all_models:
     datetimes.append(dt)
 
 # Get the index of the most recent datetime
-most_recent_index = max(range(len(datetimes)), key=lambda i: datetimes[i])
-# print("Index of most recent file:", most_recent_index)
+most_recent_index = max(range(len(datetimes)), key=lambda index: datetimes[index])
 
 # load using pickle
 with open(all_models[most_recent_index], 'rb') as f:
@@ -102,9 +101,22 @@ with open(all_models[most_recent_index], 'rb') as f:
 
 ALL_MODELS = []
 
-# initialize pretty table
-table = PrettyTable()
-table.field_names = ["MODEL", "Constraint violation (first-last)", "Cost (first-last-increment)", "Best achievable cost", "QP failed"]
+# setup printout
+columns = [("MODEL", 10),
+           ("Constraint violation (first-last)", 33),
+           ("Cost (first-last-increment)", 30),
+           ("Best achievable cost", 25),
+           ("QP failed", 10),
+           ("Uncertainty radius", 18)]
+
+# Create a format string based on column widths
+format_str = " | ".join(f"{{:^{width}}}" for _, width in columns)
+
+# Print header
+header = format_str.format(*(name for name, _ in columns))
+separator = "-+-".join("-" * width for _, width in columns)
+print(header)
+print(separator)
 
 # loop through all models
 for i,model in enumerate(model_list):
@@ -147,32 +159,51 @@ for i,model in enumerate(model_list):
     if use_noise:
         w0 = model['w0']
 
-    # upper level cost
-    Q_true = 10*ca.DM.eye(n_x)
-    R_true = 1
+    # check if upper level cost should be taken from model list
+    if not USE_CUSTOM_COST_SPEC and model['best_cost'] != 0:
 
-    # constraints are simple bounds on state and input
-    x_max = 5*ca.DM.ones(n_x,1)
-    x_min = -x_max
-    u_max = 1
-    u_min = -u_max
+        # if so, extract upper level cost
+        Q_true = model['cost_spec']['Q']
+        R_true = model['cost_spec']['R']
+
+        # and the constraints
+        x_max = model['cost_spec']['x_max']
+        x_min = model['cost_spec']['x_min']
+        u_max = model['cost_spec']['u_max']
+        u_min = model['cost_spec']['u_min']
+
+    # otherwise, use the specifications provided
+    else:
+
+        # cost
+        Q_true = COST_SPEC['Q'] * ca.DM.eye(n_x)
+        R_true = COST_SPEC['R']
+
+        # constraints are simple bounds on state and input
+        x_max = COST_SPEC['x_max'] * ca.DM.ones(n_x, 1)
+        x_min = COST_SPEC['x_min'] * ca.DM.ones(n_x, 1)
+        u_max = COST_SPEC['u_max']
+        u_min = COST_SPEC['u_min']
 
     # parameter = terminal state cost and input cost
-    c_q = ca.SX.sym('c_q',int(n_x*(n_x+1)/2),1)
-    c_r = ca.SX.sym('c_r',1,1)
+    c_qx = ca.SX.sym('c_qx', int(n_x * (n_x + 1) / 2), 1)
+    c_qn = ca.SX.sym('c_q', int(n_x * (n_x + 1) / 2), 1)
+    c_r = ca.SX.sym('c_r', 1, 1)
 
     # stage cost (state)
-    Qx = [Q_true] * (MPC_HORIZON-1)
+    Qx = [param2terminal_cost(c_qn) + 0.01 * ca.SX.eye(n_x)] * (MPC_HORIZON - 1)
+    # Qx = [Q_true] * (MPC_HORIZON - 1)
 
     # stage cost (input)
     Ru = c_r**2 + 1e-6
 
     # create parameter
-    p = ca.vcat([c_q,c_r])
-    pf = dyn_dict['theta']
+    p = ca.vcat([c_qx,c_qn,c_r,dyn_dict['theta']])
+    # p = ca.vcat([c_qx,c_qn,c_r])
+    # pf = dyn_dict['theta']
 
     # MPC terminal cost
-    Qn = param2terminal_cost(c_q) + 0.01*ca.SX.eye(n_x)
+    Qn = param2terminal_cost(c_qn) + 0.01*ca.SX.eye(n_x)
 
     # append to Qx
     Qx.append(Qn)
@@ -196,17 +227,20 @@ for i,model in enumerate(model_list):
                 'solver':SOLVER}
 
     # create MPC
-    mpc = QP(ingredients=ing,p=p,pf=pf,options=qp_options)
+    mpc = QP(ingredients=ing, p=p, options=qp_options)
+    # mpc = QP(ingredients=ing, p=p, pf=pf, options=qp_options)
 
     # create upper level
-    upper_level = UpperLevel(p=p,pf=pf,horizon=model['dim']['horizon'],mpc=mpc)
+    upper_level = UpperLevel(p=p, horizon=model['dim']['horizon'], mpc=mpc)
+    # upper_level = UpperLevel(p=p, pf=pf, horizon=model['dim']['horizon'], mpc=mpc)
 
     # extract linearized dynamics at the origin
     A = dyn.A_nom(ca.DM(n_x,1),ca.DM(n_u,1),theta0)
     B = dyn.B_nom(ca.DM(n_x,1),ca.DM(n_u,1),theta0)
 
     # compute terminal cost initialization
-    p_init = ca.vertcat(dare2param(A,B,Q_true,R_true),1e-1)#ca.vertcat(ca.DM.ones(p.shape[0]-1,1)*1e-3,1)#
+    p_init = ca.vertcat(quad_cost_2_param(Q_true), quad_cost_2_param(Q_true), R_true, theta0)
+    # p_init = ca.vertcat(dare2param(A, B, Q_true, R_true), 1e-1)
 
     # extract closed-loop variables for upper level
     x_cl = ca.vec(upper_level.param['x_cl'])
@@ -238,9 +272,9 @@ for i,model in enumerate(model_list):
             n_models=N_MODELS,
             R=1,
             S=1,
-            delta=LAM,
+            delta=DELTA,
             horizon=model['dim']['horizon'],
-            lam=3,
+            lam=LAM,
             theta0=theta0,
             jit=False,
             idx_pf=range(theta0.shape[0]))
@@ -277,8 +311,12 @@ for i,model in enumerate(model_list):
         init_dict['w'] = model['w0']
     # needed for compatibility
     if MODE == 'robust':
-        # TODO: add randomness here too, you need to evaluate c_k_0
-        init_dict['theta'] = [init_dict['theta']] * N_MODELS
+
+        # get initial radius of confidence region
+        c_k_0 = sys_id_init()['c']
+
+        # sample random models
+        init_dict['theta'] = ca.horzsplit_n(ca.DM(init_dict['theta'] + c_k_0 * sample_unit_ball(scenario.dim['theta'], N_MODELS).T))
 
     # update options
     sim_options = {'save_memory':True,'use_true_model':False,'max_k':ITERATIONS,'true_theta':np.array(model['theta_true']),'verbosity':0}
@@ -288,43 +326,41 @@ for i,model in enumerate(model_list):
     # run first simulation
     _, _, first_qp_failed = scenario.simulate(options=sim_options,init=init_dict)
 
-    if not first_qp_failed:
-    
+    # check if QP solver failed in the first iteration
+    if first_qp_failed:
+        qp_failed = 'First'
+
+        # fill dummy lists for compatibility
+        cost = [ca.inf,ca.inf]
+        cst = [0,0]
+
+    # if not, run the closed-loop optimization
+    else:
         # test closed loop
         sim_list,_,p_best,qp_failed_closed_loop = scenario.closed_loop(options=sim_options,init=init_dict)
 
         # compute cost and constraint violation improvement
         cost = [sim.cost for sim in sim_list]
         cst = [sim.cst for sim in sim_list]
+        c_k = [sim.psi['c'] for sim in sim_list]
 
-    if first_qp_failed:
-        qp_failed = 'First'
-    elif qp_failed_closed_loop:
-        qp_failed = 'Sim'
-    else:
-        qp_failed = 'Never'
+        # update qp_failed flag
+        qp_failed = 'Sim' if qp_failed_closed_loop else 'Never'
 
-    # create trajectory optimization solver
-    NLP = scenario.make_trajectory_opt(theta=model['theta_true'])
+        # create trajectory optimization solver
+        NLP = scenario.make_trajectory_opt(theta=model['theta_true'])
 
-    # warm start if QP has not failed
-    x_warm = sim_list[-1].x if qp_failed == 'Never' else None
-    u_warm = sim_list[-1].u if qp_failed == 'Never' else None
-    
-    # solve trajectory optimization problem
-    nlp_out,nlp_solved = NLP(x0,x_warm,u_warm)
+        # warm start if QP has not failed
+        x_warm = sim_list[-1].x if qp_failed == 'Never' else None
+        u_warm = sim_list[-1].u if qp_failed == 'Never' else None
 
-    best_cost = nlp_out.cost if nlp_solved else ca.inf
+        # solve trajectory optimization problem
+        nlp_out,nlp_solved = NLP(x0,x_warm,u_warm)
 
-    # add to table
-    table.add_row([i, f'{ca.sum1(ca.fmax(cst[0],0))} | {ca.sum1(ca.fmax(cst[-1],0))}', f'{cost[0]} | {cost[-1]} | {cost[-1]-cost[0]}', f'{best_cost} ({best_cost-cost[-1]})', qp_failed])
+        best_cost = nlp_out.cost if nlp_solved else ca.inf
 
-    # clear previous rows
-    if i > 0:
-        clear_last_lines(4+i)
-    
-    # Print the table
-    print(table)
+        # add to table
+        print(format_str.format(i, f'{ca.sum1(ca.fmax(cst[0],0))} | {ca.sum1(ca.fmax(cst[-1],0))}', f'{cost[0]} | {cost[-1]} | {cost[-1]-cost[0]}', f'{best_cost} ({best_cost-cost[-1]})', qp_failed, f'{c_k[1]} | {c_k[-1]}'))
 
 # save table with results
 print('me')

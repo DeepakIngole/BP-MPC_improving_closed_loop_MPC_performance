@@ -6,7 +6,6 @@ import numpy as np
 from glob import glob
 from datetime import datetime
 import pickle
-from prettytable import PrettyTable, NONE
 
 # add root to python path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')))
@@ -19,7 +18,6 @@ from utils.cleanup import cleanup
 from utils.cost_utils import quad_cost_and_bounds, bound2poly, param2terminal_cost, dare2param, quad_cost_2_param
 from src.upper_level import UpperLevel
 from utils.parameter_update import get_robust_descent_solver
-from utils.sys_id import get_c_k_func, get_phi
 from utils.sample_utils import sample_unit_ball
 
 # cleanup jit files
@@ -47,18 +45,18 @@ SOLVER = 'daqp'
 MODE = 'robust'
 
 # number of models to simulate
-N_MODELS = 10
+N_MODELS = 20
 
 # horizons
-MPC_HORIZON = 10
+MPC_HORIZON = 5
 ITERATIONS = 20
 
 # penalties on constraint violation (closed-loop)
-L2_PENALTY = 0
-L1_PENALTY = 0
+L2_PENALTY = 10
+L1_PENALTY = 10
 
 # system identification parameters
-LAM = 0.1
+LAM = 0.2
 DELTA = 0.01
 R = 0.1
 
@@ -85,7 +83,7 @@ for s in all_models:
     datetimes.append(dt)
 
 # Get the index of the most recent datetime
-most_recent_index = max(range(len(datetimes)), key=lambda i: datetimes[i])
+most_recent_index = max(range(len(datetimes)), key=lambda index: datetimes[index])
 
 # load using pickle
 with open(all_models[most_recent_index], 'rb') as f:
@@ -262,8 +260,9 @@ for i,model in enumerate(model_list):
                    'true_theta': np.array(model['theta_true']), 'verbosity': 0}
 
     # compute confidence bound
-    c_k = get_c_k_func(R=R, n_theta=scenario.dim['theta'], lam=LAM, delta=DELTA,
-                       S=ca.norm_2(model['theta_true'] - theta0))(LAM)
+    # c_k = get_c_k_func(R=R, n_theta=scenario.dim['theta'], lam=LAM, delta=DELTA,
+    #                    S=ca.norm_2(model['theta_true'] - theta0))(LAM)
+    c_k = LAM*ca.norm_2(model['theta_true'] - theta0)
 
     # initialize theta: first add randomized values
     theta_init_random = ca.DM(theta0 + c_k * sample_unit_ball(scenario.dim['theta'], N_MODELS).T)
@@ -310,6 +309,7 @@ for i,model in enumerate(model_list):
 
     # get robust gradient
     _,j_p_robust = robust_descent_solver(ca.hcat(j_p_list[:-2]))
+    j_p_average = ca.DM(np.mean(np.array(ca.hcat(j_p_list[:-2])),axis=1))
 
     # get nominal gradient
     j_p_nominal = np.array(j_p_list[-2]).squeeze()

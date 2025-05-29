@@ -236,18 +236,18 @@ def rls_robust(
         """
         Performs a recursive least squares (RLS) update for system identification.
 
-        This function updates the system identification variables (A, b, theta) using the current simulation data.
+        This function updates the system identification variables (A, b, c, theta) using the current simulation data.
         It computes feature vectors and output vectors from the simulation, reshapes them as needed, and applies
         the RLS update equations to refine the model parameters.
 
         Args:
             sim (SimVar): Simulation variable object containing state and input trajectories.
-            running_vars (dict): Dictionary containing the current values of 'A' and 'b' for the RLS update.
+            running_vars (dict): Dictionary containing the current values of 'A', 'b', and 'c' for the RLS update.
             k (int): Current time step index (unused in the function body).
 
         Returns:
             dict: Updated dictionary of system identification variables, merging the previous `sim.psi` with the
-                new values for 'A', 'b', and 'theta'.
+                new values for 'A', 'b', 'c', and 'theta'.
         """
 
         # get past a and 
@@ -278,7 +278,7 @@ def rls_robust(
         theta = ca.DM(theta_single + c_k*sample_unit_ball(n_theta,n_models).T)
 
         # run through the horizon and perform the RLS updates
-        new_psi = {'A':a_k_1,'b':b_k_1,'theta':theta}
+        new_psi = {'A':a_k_1,'b':b_k_1,'theta':theta,'c':c_k}
 
         # check if pf should be updated too
         if idx_pf is not None:
@@ -302,8 +302,9 @@ def rls_robust(
             dict: A dictionary with the following keys:
                 - 'A': A square diagonal matrix of size n_theta, scaled by lam (ca.DM.eye(n_theta) * lam).
                 - 'b': The initial parameter vector theta0.
+                - 'c': The initial radius of the confidence region.
         """
-        return {'A':ca.DM.eye(n_theta)*lam,'b':theta0}
+        return {'A':ca.DM.eye(n_theta)*lam,'b':theta0*lam,'c':c_k_func(lam)}
     
     return sys_id_update, sys_id_init, phi
 
@@ -363,17 +364,20 @@ def rls(
     n_theta = dynamics.param_nom['theta'].shape[0]
     n_x = dynamics.dim['x']
 
+    # form function defining the confidence region
+    c_k_func = get_c_k_func(R=1,n_theta=n_theta,lam=lam,delta=0.01,S=1)
+
     def sys_id_update(sim:SimVar,running_vars:dict,k:int) -> dict:
         """
         Performs a recursive least squares (RLS) update for system identification.
 
-        This function updates the system identification variables (A, b, theta) using the current simulation data.
+        This function updates the system identification variables (A, b, c, theta) using the current simulation data.
         It computes feature vectors and output vectors from the simulation, reshapes them as needed, and applies
         the RLS update equations to refine the model parameters.
 
         Args:
             sim (SimVar): Simulation variable object containing state and input trajectories.
-            running_vars (dict): Dictionary containing the current values of 'A' and 'b' for the RLS update.
+            running_vars (dict): Dictionary containing the current values of 'A', 'b', and 'c' for the RLS update.
             k (int): Current time step index (unused in the function body).
 
         Returns:
@@ -401,8 +405,11 @@ def rls(
         # compute new model
         theta = ca.solve(a_k_1,b_k_1)
 
+        # get radius of uncertainty ball
+        c_k = c_k_func(np.linalg.svdvals(np.array(a_k_1))[-1])
+
         # run through the horizon and perform the RLS updates
-        new_psi = {'A':a_k_1,'b':b_k_1,'theta':theta}
+        new_psi = {'A':a_k_1,'b':b_k_1,'theta':theta,'c':c_k}
 
         # check if pf should be updated too
         if idx_pf is not None:
@@ -426,8 +433,9 @@ def rls(
             dict: A dictionary with the following keys:
                 - 'A': A square diagonal matrix of size n_theta, scaled by lam (ca.DM.eye(n_theta) * lam).
                 - 'b': The initial parameter vector theta0.
+                - 'c': The initial radius of the confidence region.
         """
-        return {'A':ca.DM.eye(n_theta)*lam,'b':theta0}
+        return {'A':ca.DM.eye(n_theta)*lam,'b':theta0*lam,'c':c_k_func(lam)}
     
     return sys_id_update, sys_id_init, phi
 
