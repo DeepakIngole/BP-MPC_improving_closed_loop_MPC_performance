@@ -18,28 +18,28 @@ TS = 0.15
 NX = 4
 
 # magnitude of (continuous time) poles
-POLE_RANGE = [-5,1]
+POLE_RANGE = (-5.0,1.0)
 
 # horizons
-HORIZON = 20
+HORIZON = 50
 
 # uncertainty on poles
-POLE_UNCERTAINTY = 1
+POLE_UNCERTAINTY = 4
 
 # how spread out the initial condition is
-X0_MAG = 0
+X0_MAG = 2
 
 # decide whether to include noise or not
-NOISE_MAG = 0
+NOISE_MAG = 0.2
 
 # number of models used in robust GD
-N_MODELS = 100
+N_MODELS = 25
 
-# whether or not only feasible models should be generated
+# whether only feasible models should be generated
 FEASIBLE_ONLY = True
 
 # upper-level cost specification (meaningful only if FEASIBLE_ONLY = True)
-UPPER_LEVEL_SPECS = {'Q':10*ca.DM.eye(NX),'R':1,'x_max':5*ca.DM.ones(NX,1),'x_min':-5*ca.DM.ones(NX,1),'u_max':1,'u_min':-1}
+UPPER_LEVEL_SPECS = {'Q':10*ca.DM.eye(NX),'R':1,'x_max':15*ca.DM.ones(NX,1),'x_min':-15*ca.DM.ones(NX,1),'u_max':1,'u_min':-1}
 
 
 def generate_multiple(
@@ -47,7 +47,7 @@ def generate_multiple(
         n_x:int = 4,
         horizon:int = 20,
         n_models:int = 1,
-        pole_range:Tuple[float,float] = [-5,1],
+        pole_range:Optional[Tuple[float,float]] = None,
         pole_uncertainty:float = 1,
         x0_mag:float = 0.0,
         noise_mag:float = 0.0,
@@ -87,7 +87,7 @@ def generate_multiple(
         x0_mag (float, optional): Magnitude of the initial state dispersion. Must be non-negative. Default is 0, which 
             leads to x0 = 1.
         noise_mag (float, optional): Magnitude of the process noise. Must be non-negative. Default is 0.1.
-        feasible_only (bool, optional): Whether or not only models leading to feasible optimization problems are returned.
+        feasible_only (bool, optional): Whether only models leading to feasible optimization problems are returned.
         upper_level_specs (dict, optional): Specifications of the optimization problem (meaningful only if feasible_only is
             set to True). It must contain the keys ['Q', 'R', 'x_min', 'x_max', 'u_min', 'u_max'] (see above for details).
 
@@ -101,6 +101,10 @@ def generate_multiple(
         Saves the generated models to a pickle file in the './.models/' directory. The filename includes the timestamp,
         number of states, pole range, number of models, and whether noise is present.
     """
+
+    # default value of pole_range
+    if pole_range is None:
+        pole_range = [-5.0,1.0]
 
     assert sampling_time > 0, 'Sampling time must be positive.'
     assert n_x > 0, 'Number of states must be positive.'
@@ -155,7 +159,7 @@ def generate_single(
         sampling_time:float=0.15,
         n_x:int=4,
         horizon:int=20,
-        pole_range:Tuple[float,float]=[-5,1],
+        pole_range:Optional[Tuple[float,float]]=None,
         pole_uncertainty:float=1.0,
         noise_mag:float=0.0,
         x0_mag:float=0.0
@@ -188,6 +192,10 @@ def generate_single(
             - 'B_uncertain': Input matrix of the uncertain system.
     """
 
+    # default values of pole_range
+    if pole_range is None:
+        pole_range = [-5.0, 1.0]
+
     # check if noise should be used
     use_noise = noise_mag > 0
 
@@ -213,8 +221,9 @@ def generate_single(
 
     # create new system with uncertainty by sampling new poles within the specified
     # uncertainty range
-    poles_uncertain = pole_uncertainty*(np.ones(n_x)+2*np.random.rand(n_x))
-    A_uncertain,B_uncertain,_ = poles_to_linear_sys(poles_uncertain,Ts=sampling_time)
+    poles_uncertain_unit = np.ones(n_x)+2*np.random.rand(n_x)
+    poles_uncertain = pole_uncertainty/np.linalg.norm(poles_uncertain_unit) * poles_uncertain_unit
+    A_uncertain,B_uncertain,_ = poles_to_linear_sys(poles=poles_uncertain,sampling_time=sampling_time)
     theta0 = ca.DM(ca.vertcat(ca.vec(A_uncertain),ca.vec(B_uncertain)))
 
     # sample noise if requested
@@ -238,7 +247,7 @@ def generate_single(
     dim['horizon'] = horizon
     dim['Ts'] = sampling_time
     dim['theta'] = theta0.shape[0]
-    
+
     # form output dictionary
     out_dict = {
         'f': f,
@@ -339,7 +348,7 @@ if __name__ == "__main__":
         os.makedirs('./.models/')
     
     # get randomly generated linear models
-    model_list = generate_multiple(
+    models = generate_multiple(
         sampling_time=TS,
         n_x=NX,
         horizon=HORIZON,
@@ -355,12 +364,12 @@ if __name__ == "__main__":
     # get current date and time
     formatted_date = datetime.now().strftime("%Y_%m_%d_%H_%M_%S")
 
-    # create file name containint NX, n_modelN_MODELSs and POLE_MAG and whether or not NOISE is present
+    # create file name containing NX, n_modelN_MODELSs and POLE_MAG and whether NOISE is present
     if NOISE_MAG > 0:
         file_name = './.models/' + formatted_date + f'_random_linear_models_NX_{NX}_POLE_MAG_{POLE_RANGE[0]}_to_{POLE_RANGE[1]}_N_MODELS_{N_MODELS}_NOISE.pkl'
     else:
         file_name = './.models/' + formatted_date + f'_random_linear_models_NX_{NX}_POLE_MAG_{POLE_RANGE[0]}_to_{POLE_RANGE[1]}_N_MODELS_{N_MODELS}.pkl'
 
     # dump model to file
-    with open(file_name, 'wb') as f:
-        pickle.dump(model_list, f)
+    with open(file_name, 'wb') as file2dump:
+        pickle.dump(models, file2dump)

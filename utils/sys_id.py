@@ -1,7 +1,7 @@
 import casadi as ca
 import numpy as np
 from typing import Callable, Tuple, Union, Optional
-from scipy.linalg import solve,lstsq
+from scipy.linalg import solve
 import os,sys
 from typeguard import typechecked
 from utils.sample_utils import sample_unit_ball
@@ -11,6 +11,60 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from src.sim_var import SimVar
 from src.dynamics import Dynamics
+
+def get_c_k_func(
+        R:float,
+        n_theta:int,
+        lam:float,
+        delta:float,
+        S:float
+    ) -> Callable[[Union[float,ca.DM,np.ndarray]],Union[float,ca.DM,np.ndarray]]:
+    """
+    Creates a function to compute the confidence bound c_k as a function of beta.
+    Parameters:
+        R (float): A positive constant related to the system or noise.
+        n_theta (int): The dimension of the parameter vector (must be positive).
+        lam (float): Regularization parameter (must be non-negative).
+        delta (float): Confidence level parameter (0 <= delta < 1).
+        S (float): Upper bound on the norm of the parameter vector (must be positive).
+    Returns:
+        Callable[[float], float]: A function c_k_func(beta) that computes the confidence bound for a given beta.
+    Raises:
+        AssertionError: If any of the input parameters do not satisfy their constraints.
+    The returned function computes:
+        c_k(beta) = R * sqrt((n_theta * log(beta) - n_theta * log(lam) - log(delta)) / beta) + sqrt(lam) * S / sqrt(beta)
+    """
+
+    assert S > 0
+    assert R > 0
+    assert lam >= 0
+    assert delta >= 0 and delta < 1
+        
+    def c_k_func(beta):
+        """
+        Computes the value of the c_k function used in system identification or control algorithms.
+
+        Parameters:
+            beta (float): A positive scalar parameter, typically related to the number of samples or confidence level.
+
+        Returns:
+            float: The computed value of the c_k function based on the provided beta and global variables.
+
+        Notes:
+            This function relies on the following global variables:
+                - R: A scalar constant (e.g., related to system noise or bounds).
+                - n_theta: The dimensionality of the parameter vector.
+                - lam: Regularization parameter (lambda), must be positive.
+                - delta: Confidence parameter, must be in (0, 1).
+                - S: A scalar constant (e.g., related to system bounds).
+
+            The formula is:
+                c_k(beta) = R * sqrt( (n_theta * log(beta) - n_theta * log(lam) - log(delta)) / beta )
+                           + sqrt(lam) * S / sqrt(beta)
+        """
+        return R*np.sqrt( ( n_theta*np.log(beta) - n_theta*np.log(lam) - np.log(delta) ) / ( beta ) ) + lam**0.5*S/np.sqrt(beta)
+    
+    return c_k_func
 
 def get_phi(dynamics:Dynamics, horizon:int, jit:Optional[bool]=False) -> ca.Function:
     """
@@ -168,11 +222,9 @@ def rls_robust(
     n_x = dynamics.dim['x']
 
     # form function defining the confidence region
-    def c_k_func(beta_k):
-        return R*np.sqrt( ( n_theta*np.log(beta_k) - n_theta*np.log(lam) - np.log(delta) ) / ( beta_k ) ) + lam**0.5*S/np.sqrt(beta_k)
+    c_k_func = get_c_k_func(R=R,n_theta=n_theta,lam=lam,delta=delta,S=S)
     
     # import matplotlib.pyplot as plt
-
     # temp_x = np.arange(3,6,0.1)
     # temp_y = c_k_func(temp_x)
     # plt.plot(temp_x,temp_y)
@@ -184,18 +236,18 @@ def rls_robust(
         """
         Performs a recursive least squares (RLS) update for system identification.
 
-        This function updates the system identification variables (A, b, theta) using the current simulation data.
+        This function updates the system identification variables (A, b, c, theta) using the current simulation data.
         It computes feature vectors and output vectors from the simulation, reshapes them as needed, and applies
         the RLS update equations to refine the model parameters.
 
         Args:
             sim (SimVar): Simulation variable object containing state and input trajectories.
-            running_vars (dict): Dictionary containing the current values of 'A' and 'b' for the RLS update.
+            running_vars (dict): Dictionary containing the current values of 'A', 'b', and 'c' for the RLS update.
             k (int): Current time step index (unused in the function body).
 
         Returns:
             dict: Updated dictionary of system identification variables, merging the previous `sim.psi` with the
-                new values for 'A', 'b', and 'theta'.
+                new values for 'A', 'b', 'c', and 'theta'.
         """
 
         # get past a and 
@@ -226,7 +278,7 @@ def rls_robust(
         theta = ca.DM(theta_single + c_k*sample_unit_ball(n_theta,n_models).T)
 
         # run through the horizon and perform the RLS updates
-        new_psi = {'A':a_k_1,'b':b_k_1,'theta':theta}
+        new_psi = {'A':a_k_1,'b':b_k_1,'theta':theta,'c':c_k}
 
         # check if pf should be updated too
         if idx_pf is not None:
@@ -250,8 +302,9 @@ def rls_robust(
             dict: A dictionary with the following keys:
                 - 'A': A square diagonal matrix of size n_theta, scaled by lam (ca.DM.eye(n_theta) * lam).
                 - 'b': The initial parameter vector theta0.
+                - 'c': The initial radius of the confidence region.
         """
-        return {'A':ca.DM.eye(n_theta)*lam,'b':theta0}
+        return {'A':ca.DM.eye(n_theta)*lam,'b':theta0*lam,'c':c_k_func(lam)}
     
     return sys_id_update, sys_id_init, phi
 
@@ -311,17 +364,20 @@ def rls(
     n_theta = dynamics.param_nom['theta'].shape[0]
     n_x = dynamics.dim['x']
 
+    # form function defining the confidence region
+    c_k_func = get_c_k_func(R=1,n_theta=n_theta,lam=lam,delta=0.01,S=1)
+
     def sys_id_update(sim:SimVar,running_vars:dict,k:int) -> dict:
         """
         Performs a recursive least squares (RLS) update for system identification.
 
-        This function updates the system identification variables (A, b, theta) using the current simulation data.
+        This function updates the system identification variables (A, b, c, theta) using the current simulation data.
         It computes feature vectors and output vectors from the simulation, reshapes them as needed, and applies
         the RLS update equations to refine the model parameters.
 
         Args:
             sim (SimVar): Simulation variable object containing state and input trajectories.
-            running_vars (dict): Dictionary containing the current values of 'A' and 'b' for the RLS update.
+            running_vars (dict): Dictionary containing the current values of 'A', 'b', and 'c' for the RLS update.
             k (int): Current time step index (unused in the function body).
 
         Returns:
@@ -349,8 +405,11 @@ def rls(
         # compute new model
         theta = ca.solve(a_k_1,b_k_1)
 
+        # get radius of uncertainty ball
+        c_k = c_k_func(np.linalg.svdvals(np.array(a_k_1))[-1])
+
         # run through the horizon and perform the RLS updates
-        new_psi = {'A':a_k_1,'b':b_k_1,'theta':theta}
+        new_psi = {'A':a_k_1,'b':b_k_1,'theta':theta,'c':c_k}
 
         # check if pf should be updated too
         if idx_pf is not None:
@@ -374,8 +433,9 @@ def rls(
             dict: A dictionary with the following keys:
                 - 'A': A square diagonal matrix of size n_theta, scaled by lam (ca.DM.eye(n_theta) * lam).
                 - 'b': The initial parameter vector theta0.
+                - 'c': The initial radius of the confidence region.
         """
-        return {'A':ca.DM.eye(n_theta)*lam,'b':theta0}
+        return {'A':ca.DM.eye(n_theta)*lam,'b':theta0*lam,'c':c_k_func(lam)}
     
     return sys_id_update, sys_id_init, phi
 
@@ -411,8 +471,8 @@ def rls_update_debug(horizon:int,phi:ca.Function,sim:SimVar,running_vars:dict,k:
         z_k_list = np.split(z_k,horizon,axis=1)
 
         # preallocate outer products
-        product_1 = a_k #np.zeros((phi_k_list[0].shape[0],phi_k_list[0].shape[0]))
-        product_2 = b_k #np.zeros((phi_k_list[0].shape[0],z_k_list[0].shape[1]))
+        product_1 = a_k
+        product_2 = b_k
 
         # test against for loop
         for i in range(horizon):

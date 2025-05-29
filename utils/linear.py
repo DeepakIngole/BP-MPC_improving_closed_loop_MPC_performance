@@ -3,12 +3,12 @@ import casadi as ca
 from scipy.linalg import expm,eig
 from typing import Tuple
 
-def poles_to_linear_sys(poles:np.array,Ts:int=0.5) -> Tuple[ca.SX,ca.SX]:
+def poles_to_linear_sys(poles:np.array,sampling_time:float=0.5) -> Tuple[ca.SX,ca.SX,ca.DM]:
     """
     Constructs a discrete-time linear state-space system (A, B) in controllable canonical form from a given set of continuous-time poles.
     Args:
         poles (np.array): Array of continuous-time poles (eigenvalues) specifying the desired system dynamics.
-        Ts (int, optional): Sampling time for discretization. Defaults to 0.5.
+        sampling_time (float, optional): Sampling time for discretization. Defaults to 0.5.
     Returns:
         Tuple[ca.SX, ca.SX, np.ndarray]: 
             - A (ca.SX): Discrete-time state transition matrix.
@@ -47,10 +47,10 @@ def poles_to_linear_sys(poles:np.array,Ts:int=0.5) -> Tuple[ca.SX,ca.SX]:
     # A_second_order = ca.SX.eye(n_x) + Ts*ca.SX(A_cont) + Ts**2/2*ca.SX(A_cont@A_cont)
 
     # discretize
-    A = ca.cse(ca.sparsify(ca.SX(expm(Ts*A_cont))))
+    A = ca.cse(ca.sparsify(ca.SX(expm(sampling_time*A_cont))))
     B = ca.cse(ca.sparsify(ca.SX(ca.pinv(A_cont)@(A-ca.SX.eye(n_x))@B_cont)))
 
     # check eigenvalues of A
-    eig_a = eig(expm(Ts*A_cont))[0]
+    eig_a = eig(expm(sampling_time*A_cont))[0]
 
-    return A,B,np.absolute(eig_a)
+    return A,B,ca.DM(np.absolute(eig_a))

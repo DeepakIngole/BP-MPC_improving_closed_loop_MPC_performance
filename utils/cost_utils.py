@@ -79,6 +79,29 @@ def param2terminal_cost(p):
 
     return out
 
+def quad_cost_2_param(Q):
+
+    # imports
+    from scipy.linalg import solve_discrete_are as dare
+    from scipy.linalg import cholesky
+
+    # turn to numpy array
+    Q = np.array(Q)
+
+    # turn into parameter
+    Q_half = ca.DM(cholesky(Q,lower=True))
+
+    # helper function to unpack P_half into a parameter vector
+    def P2p(P):
+        n = P.shape[0]
+        p = []
+        for i in range(n):
+            for j in range(i+1):
+                p.append(P[i,j])
+        return ca.vcat(p)
+
+    return P2p(Q_half)
+
 def dare2param(A,B,Q,R):
 
     # imports
