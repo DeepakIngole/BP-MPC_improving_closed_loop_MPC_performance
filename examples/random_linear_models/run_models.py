@@ -52,7 +52,7 @@ N_MODELS = 10
 
 # horizons
 MPC_HORIZON = 5
-ITERATIONS = 100
+ITERATIONS = 50
 
 # penalties on constraint violation (closed-loop)
 L2_PENALTY = 100
@@ -65,7 +65,7 @@ ADAM_BETA_1 = 0.6
 ADAM_BETA_2 = 0.9
 
 # gd parameter
-RHO = 1e-3
+RHO = 1e-4
 ETA = 0.51
 LOG = True
 
@@ -80,7 +80,7 @@ MPC_S_QUAD = 15
 MPC_S_LIN = 25
 
 # update algorithm (options: 'Adam', 'gd')
-UPDATE_ALGORITHM = 'Adam'
+UPDATE_ALGORITHM = 'gd'
 
 
 #### GET THE MODELS -----------------------------------------------------------------------------
@@ -144,7 +144,7 @@ for i,model in enumerate(model_list):
     dyn_dict['theta'] = ca.SX.sym('theta',model['dim']['theta'],1)
     if use_noise:
         dyn_dict['w'] = ca.SX.sym('w',model['dim']['w'],1)
-
+    
     # inputs to x_next
     if use_noise:
         x_next_inputs = {'x':dyn_dict['x'],'u':dyn_dict['u'],'w':dyn_dict['w']}
@@ -253,28 +253,6 @@ for i,model in enumerate(model_list):
     p_init = ca.vertcat(quad_cost_2_param(Q_true), quad_cost_2_param(Q_true), R_true, theta0)
     # p_init = ca.vertcat(dare2param(A, B, Q_true, R_true), 1e-1)
 
-    # extract closed-loop variables for upper level
-    x_cl = ca.vec(upper_level.param['x_cl'])
-    u_cl = ca.vec(upper_level.param['u_cl'])
-
-    track_cost, cst_viol_l1, cst_viol_l2 = quad_cost_and_bounds(Q_true,R_true,x_cl,u_cl,x_max,x_min)
-
-    # put together
-    cost = track_cost + L2_PENALTY*cst_viol_l2 + L1_PENALTY*cst_viol_l1
-
-    # create upper-level constraints
-    Hx,hx,_,_ = bound2poly(x_max,x_min,u_max,u_min,model['dim']['horizon']+1)
-    _,_,Hu,hu = bound2poly(x_max,x_min,u_max,u_min,model['dim']['horizon'])
-    cst_viol = ca.vcat([Hx@ca.vec(x_cl)-hx,Hu@ca.vec(u_cl)-hu])
-
-    # store in upper-level
-    upper_level.set_cost(cost,track_cost,cst_viol)
-
-    # create algorithm
-    p = upper_level.param['p']
-    j_p = upper_level.param['J_p']
-    k = upper_level.param['k']
-
     if MODE == 'robust':
         
         # create system identification algorithm
@@ -327,6 +305,33 @@ for i,model in enumerate(model_list):
         parameter_init=parameter_init,
         sys_id_update=sys_id_update,
         sys_id_init=sys_id_init)
+    
+    # extract closed-loop variables for upper level
+    x_cl = ca.vec(upper_level.param['x_cl'])
+    u_cl = ca.vec(upper_level.param['u_cl'])
+    c_k_cl = upper_level.param['psi_cl_c']
+    theta_cl = upper_level.param['psi_cl_theta']
+
+    track_cost, cst_viol_l1, cst_viol_l2 = quad_cost_and_bounds(Q_true,R_true,x_cl,u_cl,x_max,x_min)
+
+    # put together
+    cost = track_cost + L2_PENALTY*cst_viol_l2 + L1_PENALTY*cst_viol_l1
+
+    # create upper-level constraints
+    Hx,hx,_,_ = bound2poly(x_max,x_min,u_max,u_min,model['dim']['horizon']+1)
+    _,_,Hu,hu = bound2poly(x_max,x_min,u_max,u_min,model['dim']['horizon'])
+    cst_viol = ca.vcat([Hx@ca.vec(x_cl)-hx,Hu@ca.vec(u_cl)-hu])
+
+    # create auxiliary parameters taken from sys id procedure
+    psi = {'c':ca.SX.sym('c_ul',1,1),'theta':ca.SX.sym('theta_ul',*theta0.shape)}
+    
+    # store in upper-level
+    upper_level.set_cost(cost,track_cost,cst_viol)
+
+    # create algorithm
+    p = upper_level.param['p']
+    j_p = upper_level.param['J_p']
+    k = upper_level.param['k']
 
     # create scenario
     scenario = Scenario(dyn,mpc,upper_level)
@@ -342,8 +347,8 @@ for i,model in enumerate(model_list):
         c_k_0 = sys_id_init()['c']
 
         # sample random models
-        init_dict['theta'] = ca.horzsplit_n(
-            ca.DM(init_dict['theta'] + c_k_0 * sample_unit_ball(scenario.dim['theta'], N_MODELS).T))
+        init_dict['theta'] = ca.horzsplit(
+            ca.DM(init_dict['theta'] + c_k_0 * sample_unit_ball(scenario.dim['theta'], N_MODELS).T),1)
 
     # update options
     sim_options = {'save_memory': True, 'use_true_model': False, 'max_k': ITERATIONS,

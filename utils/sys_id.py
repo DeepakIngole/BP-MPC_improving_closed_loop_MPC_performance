@@ -303,8 +303,9 @@ def rls_robust(
                 - 'A': A square diagonal matrix of size n_theta, scaled by lam (ca.DM.eye(n_theta) * lam).
                 - 'b': The initial parameter vector theta0.
                 - 'c': The initial radius of the confidence region.
+                - 'theta': The nominal value of theta.
         """
-        return {'A':ca.DM.eye(n_theta)*lam,'b':theta0*lam,'c':c_k_func(lam)}
+        return {'A':ca.DM.eye(n_theta)*lam,'b':theta0*lam,'c':c_k_func(lam),'theta':theta0}
     
     return sys_id_update, sys_id_init, phi
 
@@ -434,8 +435,9 @@ def rls(
                 - 'A': A square diagonal matrix of size n_theta, scaled by lam (ca.DM.eye(n_theta) * lam).
                 - 'b': The initial parameter vector theta0.
                 - 'c': The initial radius of the confidence region.
+                - 'theta': The nominal value of theta.
         """
-        return {'A':ca.DM.eye(n_theta)*lam,'b':theta0*lam,'c':c_k_func(lam)}
+        return {'A':ca.DM.eye(n_theta)*lam,'b':theta0*lam,'c':c_k_func(lam),'theta':theta0}
     
     return sys_id_update, sys_id_init, phi
 

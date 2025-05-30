@@ -162,7 +162,7 @@ def robust_adam(
     def parameter_update(sim,k):
 
         # get gradient
-        max_gradient_error, g_t = solver(sim)
+        max_gradient_error, g_t = solver(sim.j_p)
 
         # run Adam update
         p_next, m_t, v_t = adam_rule(p=sim.p,m_t_1=sim.psi['m'],v_t_1=sim.psi['v'],g_t=g_t,
