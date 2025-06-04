@@ -1000,8 +1000,34 @@ class Scenario:
             if qp_failed:
                 break
 
+            # run sys_id if needed
+            sys_id_vars = sys_id_vars | self._upper_level.sys_id_update(sim_k, running_vars, k) if sys_id else {}
+
+            # on first iteration, initialize psi
+            if k == 0 and sim_options['mode'] == 'optimize':
+                running_vars = running_vars | self.upper_level.parameter_init(sim_k)
+
+            # store psi in simvar
+            sim_k.psi = running_vars | sys_id_vars
+
             # compute cost and constraint violation
             cost,track_cost,cst_viol = self.upper_level.cost(sim_k)
+
+            # if there is no constraint violation, and the cost has improved, save current parameter as best parameter
+            if ca.sum1(cst_viol) == 0 and cost < best_cost:
+                best_cost, p_best = cost, p
+
+            # if in optimization mode, update parameters
+            if sim_options['mode'] == 'optimize':
+
+                # compute gradient of upper-level cost function and store in simvar
+                sim_k.j_p = j_cost_f(sim_k)
+
+                # update parameter
+                running_vars = running_vars | self.upper_level.parameter_update(sim_k, k)
+
+            else:
+                sim_k.j_p = np.zeros((2, 1))  # I need a vector for compatibility with the printout
             
             # store S into list
             sim.append(sim_k)
@@ -1011,34 +1037,8 @@ class Scenario:
             total_jac_time.append(qp_data['jac_time'])
 
             # store cost and constraint violation
-            sim_k.cost = cost
+            sim_k.cost = track_cost
             sim_k.cst = cst_viol
-
-            # run sys_id if needed
-            sys_id_vars = sys_id_vars | self._upper_level.sys_id_update(sim_k,running_vars,k) if sys_id else {}
-
-            # if in optimization mode, update parameters
-            if sim_options['mode'] == 'optimize':
-
-                # if there is no constraint violation, and the cost has improved, save current parameter as best parameter
-                if ca.sum1(cst_viol) == 0 and cost < best_cost:
-                    best_cost, p_best = cost, p
-
-                # compute gradient of upper-level cost function and store in simvar
-                sim_k.j_p = j_cost_f(sim_k)
-
-                # on first iteration, initialize psi
-                if k == 0:
-                    running_vars = running_vars | self.upper_level.parameter_init(sim_k)
-
-                # store psi in simvar
-                sim_k.psi = running_vars
-
-                # update parameter
-                running_vars = running_vars | self.upper_level.parameter_update(sim_k,k)
-                
-            else:
-                sim_k.j_p = np.zeros((2,1)) # I need a vector for compatibility with the printout
 
             if sim_options['save_memory']:
                 sim_k.save_memory()

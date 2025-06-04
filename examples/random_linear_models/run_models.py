@@ -52,11 +52,12 @@ N_MODELS = 10
 
 # horizons
 MPC_HORIZON = 5
-ITERATIONS = 50
+ITERATIONS = 350
 
 # penalties on constraint violation (closed-loop)
 L2_PENALTY = 100
 L1_PENALTY = 100
+L_PROJ = 100
 
 # Adam parameters
 ADAM_ALPHA = 0.01
@@ -65,15 +66,15 @@ ADAM_BETA_1 = 0.6
 ADAM_BETA_2 = 0.9
 
 # gd parameter
-RHO = 1e-4
-ETA = 0.51
+RHO = 1e-3
+ETA = 0.8
 LOG = True
 
 # system identification parameters
 LAM = 1
 DELTA = 0.01
 R = 1
-S = 1
+S = 2
 
 # penalties on constraint violation (mpc)
 MPC_S_QUAD = 15
@@ -314,8 +315,11 @@ for i,model in enumerate(model_list):
 
     track_cost, cst_viol_l1, cst_viol_l2 = quad_cost_and_bounds(Q_true,R_true,x_cl,u_cl,x_max,x_min)
 
+    # create penalty for projecting onto the confidence region
+    projection_penalty = ca.if_else(ca.norm_2(p[-theta0.shape[0]:]-theta_cl) <= c_k_cl,0,(ca.norm_2(p[-theta0.shape[0]:]-theta_cl) - c_k_cl)**2)
+
     # put together
-    cost = track_cost + L2_PENALTY*cst_viol_l2 + L1_PENALTY*cst_viol_l1
+    cost = track_cost + L2_PENALTY*cst_viol_l2 + L1_PENALTY*cst_viol_l1 + L_PROJ*projection_penalty
 
     # create upper-level constraints
     Hx,hx,_,_ = bound2poly(x_max,x_min,u_max,u_min,model['dim']['horizon']+1)
@@ -379,6 +383,13 @@ for i,model in enumerate(model_list):
 
         # update qp_failed flag
         qp_failed = 'Sim' if qp_failed_closed_loop else 'Never'
+
+        # update cost in upper level
+        cost_nominal = track_cost + L2_PENALTY*cst_viol_l2 + L1_PENALTY*cst_viol_l1
+        upper_level.set_cost(cost_nominal,track_cost,cst_viol)
+
+        # update scenario
+        scenario.update(upper_level=upper_level)
 
         # create trajectory optimization solver
         NLP = scenario.make_trajectory_opt(theta=model['theta_true'])

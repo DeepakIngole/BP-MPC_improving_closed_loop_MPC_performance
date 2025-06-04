@@ -245,7 +245,9 @@ class UpperLevel:
 
         # check if sys id parameters are present
         param_keys = list(self.param.keys())
-        psi = [ca.vcat([ca.vec(self.param[elem]) for elem in param_keys if elem.startswith('psi_cl_')])]
+        psi_list = [ca.vec(self.param[elem]) for elem in param_keys if elem.startswith('psi_cl_')]
+        psi_names = [elem.split('psi_cl_')[1] for elem in param_keys if elem.startswith('psi_cl_')]
+        psi = [ca.vcat(psi_list)]
 
         # check if cost contains variables that are not p_cl,x_cl,u_cl,y_cl,psi
         assert len(set(symvar_str(cost)) - set(symvar_str(ca.vcat(cl_vars + psi)))) == 0, 'Cost contains variables that are not p,x_cl,u_cl,y_cl,psi.'
@@ -302,21 +304,28 @@ class UpperLevel:
                 param_idx.append(None)
 
         # assign Jacobians
-        if len(psi) > 0:
+        if len(psi_names) > 0 and param_idx[-1] is not None:
             _, j_x_p, j_u_p, j_y_p, _ = j_param
             j_cost_p, j_cost_x, j_cost_u, j_cost_y, _ = j_cost
             psi_needed = True
         else:
-            _, j_x_p, j_u_p, j_y_p = j_param
-            j_cost_p, j_cost_x, j_cost_u, j_cost_y = j_cost
+            j_x_p, j_u_p, j_y_p = j_param[1:4]
+            j_cost_p, j_cost_x, j_cost_u, j_cost_y = j_cost[0:4]
             psi_needed = False
 
         # create function that retrieves only the indices that enter the cost given
         # the full vectors
         def get_cost_idx(sim):
 
-            # get input list
-            inputs = [sim.p,sim.x,sim.u,sim.y,sim.psi] if psi_needed else [sim.p,sim.x,sim.u,sim.y]
+            if psi_needed:
+                # gather psi
+                psi_local = ca.vcat([ca.vec(sim.psi[key]) for key in psi_names])
+
+                # get input list
+                inputs = [sim.p,sim.x,sim.u,sim.y,psi_local]
+            else:
+                # get input list without psi
+                inputs = [sim.p,sim.x,sim.u,sim.y]
             
             # initialize output list
             out = []
@@ -378,7 +387,10 @@ class UpperLevel:
         self._cost = cost_func
 
         # create full jacobian functions in two steps
-        j_cost = j_cost_p + j_cost_x@j_x_p + j_cost_u@j_u_p + j_cost_y@j_y_p
+        if param_idx[0] is not None:
+            j_cost = j_cost_p@ca.SX.eye(self.dim['p'])[param_idx[0],:] + j_cost_x@j_x_p + j_cost_u@j_u_p + j_cost_y@j_y_p
+        else:
+            j_cost = j_cost_p + j_cost_x@j_x_p + j_cost_u@j_u_p + j_cost_y@j_y_p
         j_cost_func_temp = ca.Function('J_cost',[cost_in,j_x_p,j_u_p,j_y_p],[j_cost.T])
 
         # save indices
