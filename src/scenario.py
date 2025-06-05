@@ -471,13 +471,14 @@ class Scenario:
             raise Exception('Model uncertainty d is required to simulate the system.')
 
         # extract variables
-        p = init_values['p'] if 'p' in init_values else None                # parameters
-        pf = init_values['pf'] if 'pf' in init_values else None             # fixed parameters
-        w = init_values['w'] if 'w' in init_values else None                # noise
-        d = init_values['d'] if 'd' in init_values else None                # model uncertainty
-        theta = init_values['theta'] if 'theta' in init_values else None    # nominal model
-        y = init_values['y_lin'] if 'y_lin' in init_values else None        # linearization trajectory
-        x = init_values['x']                                                # initial state
+        none_block = None if max_length == 1 else [None] * max_length
+        p = init_values['p'] if 'p' in init_values else none_block              # parameters
+        pf = init_values['pf'] if 'pf' in init_values else none_block           # fixed parameters
+        w = init_values['w'] if 'w' in init_values else none_block              # noise
+        d = init_values['d'] if 'd' in init_values else none_block              # model uncertainty
+        theta = init_values['theta'] if 'theta' in init_values else none_block  # nominal model
+        y = init_values['y_lin'] if 'y_lin' in init_values else none_block      # linearization trajectory
+        x = init_values['x']                                                    # initial state
 
         return p,pf,w,d,theta,y,x
 
@@ -888,7 +889,8 @@ class Scenario:
         n_samples = len(w) if isinstance(w,list) else 1
 
         # if only one sample is passed, turn certain parameters to length-one lists (for compatibility)
-        d, w, theta, x, y = [d], [w], [theta], [x], [y]
+        if n_samples == 1:
+            d, w, theta, x, y = [d], [w], [theta], [x], [y]
 
         # create running variable. This variable contains the value of each parameter for a single iteration
         # and it gets updated automatically by the sys_id and the parameter_update subroutines.
@@ -991,7 +993,7 @@ class Scenario:
             idx = randint(0,n_samples-1) if sim_options['random_sampling'] else int(ca.fmod(k,batch_size))
 
             # update running vars with samples for iteration k
-            running_vars = running_vars | {'d':d[idx], 'w':w[idx], 'x':x[idx], 'y':y[idx], 'theta':theta[idx]} | sys_id_vars
+            running_vars = running_vars | {'d':d[idx], 'w':w[idx], 'x':x[idx], 'y':y[idx], 'theta':theta} | sys_id_vars
 
             # run simulation
             sim_k, qp_data, qp_failed = self._simulate(var_in=running_vars,options=sim_options,n_models=n_models)

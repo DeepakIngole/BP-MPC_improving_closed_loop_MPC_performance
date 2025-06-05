@@ -50,12 +50,12 @@ N_MODELS = 10
 
 # horizons
 MPC_HORIZON = 5
-ITERATIONS = 250
+ITERATIONS = 500
 
 # penalties on constraint violation (closed-loop)
 L2_PENALTY = 100
 L1_PENALTY = 100
-L_PROJ = 300
+L_PROJ = 250
 
 # Adam parameters
 ADAM_ALPHA = 0.01
@@ -64,8 +64,8 @@ ADAM_BETA_1 = 0.6
 ADAM_BETA_2 = 0.9
 
 # gd parameter
-RHO = 1e-3
-ETA = 0.8
+RHO = 1e-4
+ETA = 0.6
 LOG = True
 
 # system identification parameters
@@ -79,7 +79,10 @@ MPC_S_QUAD = 15
 MPC_S_LIN = 25
 
 # update algorithm (options: 'Adam', 'gd')
-UPDATE_ALGORITHM = 'Adam'
+UPDATE_ALGORITHM = 'gd'
+
+# set to true to run the algorithm on additional unseen noise samples
+VALIDATE = True
 
 
 #### GET THE MODELS -----------------------------------------------------------------------------
@@ -115,6 +118,7 @@ ALL_MODELS = []
 columns = [("MODEL", 10),
            ("Constraint violation (first-last)", 33),
            ("Cost (first-last-increment)", 30),
+           ("Cost on holdout set", 19),
            ("Best achievable cost", 25),
            ("QP failed", 10),
            ("Uncertainty radius", 18),
@@ -360,8 +364,13 @@ for i,model in enumerate(model_list):
     if MODE == 'robust':
         sim_options['simulate_parallel_models'] = True
 
+    # create dictionary for first simulation (keep only the first noise sample)
+    init_dict_first = init_dict.copy()
+    if use_noise:
+        init_dict_first['w'] = model['w0'][0]
+
     # run first simulation
-    _, _, first_qp_failed = scenario.simulate(options=sim_options,init=init_dict)
+    _, _, first_qp_failed = scenario.simulate(options=sim_options,init=init_dict_first)
 
     # check if QP solver failed in the first iteration
     if first_qp_failed:
@@ -373,6 +382,12 @@ for i,model in enumerate(model_list):
 
     # if not, run the closed-loop optimization
     else:
+
+        # if noise is used, sample the noise randomly in each iteration
+        if use_noise:
+            sim_options['random_sampling'] = True
+            sim_options['gd_type'] = 'sgd'
+
         # test closed loop
         sim_list,_,p_best,qp_failed_closed_loop = scenario.closed_loop(options=sim_options,init=init_dict)
 
@@ -387,29 +402,62 @@ for i,model in enumerate(model_list):
         # update qp_failed flag
         qp_failed = 'Sim' if qp_failed_closed_loop else 'Never'
 
-        # update cost in upper level
-        cost_nominal = track_cost + L2_PENALTY*cst_viol_l2 + L1_PENALTY*cst_viol_l1
-        upper_level.set_cost(cost_nominal,track_cost,cst_viol)
+        # validate solution on unseen samples
+        if qp_failed == 'Never' and VALIDATE:
 
-        # update scenario
-        scenario.update(upper_level=upper_level)
+            # update initialization dictionary => add final parameter value and unseen noise
+            init_dict_validate = init_dict.copy()
+            init_dict_validate['w'] = model['w0']
+            init_dict_validate['p'] = p_list[-1]
 
-        # create trajectory optimization solver
-        NLP = scenario.make_trajectory_opt(theta=model['theta_true'])
+            # run in simulation mode
+            sim_list_validate,*_ = scenario.closed_loop(options=sim_options|{'mode':'simulate'},init=init_dict_validate)
 
-        # warm start if QP has not failed
-        x_warm = sim_list[-1].x if qp_failed == 'Never' else None
-        u_warm = sim_list[-1].u if qp_failed == 'Never' else None
+            # get cost
+            cost_validate = [sim.cost for sim in sim_list_validate]
+            cst_validate = [sim.cst for sim in sim_list_validate]
 
-        # solve trajectory optimization problem
-        nlp_out,nlp_solved = NLP(x0,x_warm,u_warm)
+            # compute mean cost
+            mean_cost_validate = np.mean(np.array(cost_validate))
+        
+        else:
 
-        best_cost = nlp_out.cost if nlp_solved else ca.inf
+            mean_cost_validate = np.inf
+
+        # TODO: I need to implement a receding horizon "optimal" controller for when there is noise
+
+        if USE_CUSTOM_COST_SPEC or 'best_cost' not in model:
+
+            # update cost in upper level
+            cost_nominal = track_cost + L2_PENALTY*cst_viol_l2 + L1_PENALTY*cst_viol_l1
+            upper_level.set_cost(cost_nominal,track_cost,cst_viol)
+
+            # update scenario
+            scenario.update(upper_level=upper_level)
+
+            # create trajectory optimization solver
+            NLP = scenario.make_trajectory_opt(theta=model['theta_true'])
+
+            # warm start if QP has not failed
+            x_warm = sim_list[-1].x if qp_failed == 'Never' else None
+            u_warm = sim_list[-1].u if qp_failed == 'Never' else None
+
+            # solve trajectory optimization problem
+            nlp_out,nlp_solved = NLP(x0,x_warm,u_warm)
+
+            best_cost = nlp_out.cost if nlp_solved else ca.inf
+        
+        else:
+            
+            # use the best cost from the model
+            best_cost = np.mean(np.array(model['best_cost_testing'])) if use_noise else model['best_cost']
 
         # add to table
         print(format_str.format(i, f'{ca.sum1(ca.fmax(cst[0], 0))} | {ca.sum1(ca.fmax(cst[-1], 0))}',
                                 f'{cost[0]} | {cost[-1]} | {cost[-1] - cost[0]}',
-                                f'{best_cost} ({best_cost - cost[-1]})', qp_failed, 
+                                '{0:04f}'.format(mean_cost_validate),
+                                f'{best_cost} ({best_cost - cost[-1]})',
+                                qp_failed,
                                 '{0:0.3f}'.format(c_k[1]) + ' | ' + '{0:0.3f}'.format(c_k[-1]),
                                 '{0:0.3f}'.format(ca.norm_2(model['theta_true']-theta_last).full().squeeze()) + ' | ' \
                                  + '{0:0.3f}'.format(ca.norm_2(model['theta_true']-theta_first).full().squeeze()) + ' | ' \
