@@ -6,8 +6,6 @@ import numpy as np
 from glob import glob
 from datetime import datetime
 import pickle
-from prettytable import PrettyTable
-
 
 # add root to python path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')))
@@ -52,12 +50,12 @@ N_MODELS = 10
 
 # horizons
 MPC_HORIZON = 5
-ITERATIONS = 350
+ITERATIONS = 250
 
 # penalties on constraint violation (closed-loop)
 L2_PENALTY = 100
 L1_PENALTY = 100
-L_PROJ = 100
+L_PROJ = 300
 
 # Adam parameters
 ADAM_ALPHA = 0.01
@@ -81,7 +79,7 @@ MPC_S_QUAD = 15
 MPC_S_LIN = 25
 
 # update algorithm (options: 'Adam', 'gd')
-UPDATE_ALGORITHM = 'gd'
+UPDATE_ALGORITHM = 'Adam'
 
 
 #### GET THE MODELS -----------------------------------------------------------------------------
@@ -119,7 +117,8 @@ columns = [("MODEL", 10),
            ("Cost (first-last-increment)", 30),
            ("Best achievable cost", 25),
            ("QP failed", 10),
-           ("Uncertainty radius", 18)]
+           ("Uncertainty radius", 18),
+           ('Error on identified theta', 25)]
 
 # Create a format string based on column widths
 format_str = " | ".join(f"{{:^{width}}}" for _, width in columns)
@@ -316,7 +315,8 @@ for i,model in enumerate(model_list):
     track_cost, cst_viol_l1, cst_viol_l2 = quad_cost_and_bounds(Q_true,R_true,x_cl,u_cl,x_max,x_min)
 
     # create penalty for projecting onto the confidence region
-    projection_penalty = ca.if_else(ca.norm_2(p[-theta0.shape[0]:]-theta_cl) <= c_k_cl,0,(ca.norm_2(p[-theta0.shape[0]:]-theta_cl) - c_k_cl)**2)
+    # projection_penalty = ca.if_else(ca.norm_2(p[-theta0.shape[0]:]-theta_cl) <= c_k_cl,0,(ca.norm_2(p[-theta0.shape[0]:]-theta_cl) - c_k_cl)**2)
+    projection_penalty = (p[-theta0.shape[0]:]-theta_cl).T@(p[-theta0.shape[0]:]-theta_cl)
 
     # put together
     cost = track_cost + L2_PENALTY*cst_viol_l2 + L1_PENALTY*cst_viol_l1 + L_PROJ*projection_penalty
@@ -380,6 +380,9 @@ for i,model in enumerate(model_list):
         cost = [sim.cost for sim in sim_list]
         cst = [sim.cst for sim in sim_list]
         c_k = [sim.psi['c'] for sim in sim_list]
+        theta_last = sim_list[-1].psi['theta']
+        theta_first = sim_list[0].psi['theta']
+        p_list = [sim.p for sim in sim_list]
 
         # update qp_failed flag
         qp_failed = 'Sim' if qp_failed_closed_loop else 'Never'
@@ -406,4 +409,8 @@ for i,model in enumerate(model_list):
         # add to table
         print(format_str.format(i, f'{ca.sum1(ca.fmax(cst[0], 0))} | {ca.sum1(ca.fmax(cst[-1], 0))}',
                                 f'{cost[0]} | {cost[-1]} | {cost[-1] - cost[0]}',
-                                f'{best_cost} ({best_cost - cost[-1]})', qp_failed, f'{c_k[1]} | {c_k[-1]}'))
+                                f'{best_cost} ({best_cost - cost[-1]})', qp_failed, 
+                                '{0:0.3f}'.format(c_k[1]) + ' | ' + '{0:0.3f}'.format(c_k[-1]),
+                                '{0:0.3f}'.format(ca.norm_2(model['theta_true']-theta_last).full().squeeze()) + ' | ' \
+                                 + '{0:0.3f}'.format(ca.norm_2(model['theta_true']-theta_first).full().squeeze()) + ' | ' \
+                                 + '{0:0.3f}'.format(ca.norm_2(model['theta_true']-p_list[-1][-theta0.shape[0]:]).full().squeeze())))
