@@ -30,8 +30,8 @@ POLE_UNCERTAINTY = 4
 X0_MAG = 1.5
 
 # decide whether to include noise or not
-NOISE_MAG = 0.1
-NOISE_SAMPLES = 50
+NOISE_MAG = 0.0
+NOISE_SAMPLES = 0
 
 # number of models used in robust GD
 N_MODELS = 25
@@ -118,13 +118,14 @@ def generate_multiple(
     assert pole_uncertainty >= 0, 'Pole uncertainty range must be non-negative.'
     assert x0_mag >= 0, 'Dispersion of initial state must be non-negative.'
     assert noise_mag >= 0, 'Noise magnitude must be non-negative.'
-    assert noise_samples > 0, 'Number of noise samples must be strictly positive.'
 
     # initialize model list
     model_list = []
 
     # check if noise should be generated
     use_noise = noise_mag > 0
+    if use_noise:
+        assert noise_samples > 0, 'Number of noise samples must be strictly positive.'
 
     # generate n_models random linear models
     i = 0
@@ -146,6 +147,13 @@ def generate_multiple(
             # generate trajectory optimization solver if requested
             traj_solver = generate_trajectory_optimization_solver(model,upper_level_specs)
 
+            # check if problem is feasible without noise
+            best_cost = traj_solver(model['theta_true'],ca.DM(model['dim']['w'],horizon)) if use_noise else traj_solver(model['theta_true'])
+
+            # if cost is infinite, continue to the next model
+            if best_cost == ca.inf:
+                continue
+
             # generate random noise if requested
             if use_noise:
 
@@ -165,10 +173,10 @@ def generate_multiple(
                     sample_candidate = 2*np.random.rand(model['dim']['w'],horizon)-np.ones((model['dim']['w'],horizon))
 
                     # try to solve the trajectory optimization problem with this sample
-                    try:
-                        cost_candidate = traj_solver(model['theta_true'],sample_candidate)
-                    except:
-                        # if it fails, continue to the next sample
+                    cost_candidate = traj_solver(model['theta_true'],sample_candidate)
+                    
+                    # if cost is infinite, continue to the next model
+                    if cost_candidate == ca.inf:
                         continue
 
                     # if it succeeds, append to the list of costs and samples
@@ -186,10 +194,10 @@ def generate_multiple(
             # no noise is used, but we still need to solve the trajectory optimization problem
             else:
                 # solve the trajectory optimization problem
-                try:
-                    best_cost = traj_solver(model['theta_true'])
-                except:
-                    # if it fails, continue to the next model
+                best_cost = traj_solver(model['theta_true'])
+
+                # if cost is infinite, continue to the next model
+                if best_cost == ca.inf:
                     continue
 
                 # add cost to model
@@ -353,6 +361,7 @@ def generate_trajectory_optimization_solver(model:dict,upper_level_specs:dict) -
     u_min = upper_level_specs['u_min']
 
     # get opti stack
+    # opti = ca.Opti('conic')
     opti = ca.Opti()
 
     # create optimization variables
@@ -394,8 +403,9 @@ def generate_trajectory_optimization_solver(model:dict,upper_level_specs:dict) -
     # solver
     opts = dict()
     opts["print_time"] = False
-    opts['ipopt'] = {"print_level": 0, "sb":'yes'}
-    # opts['error_on_fail'] = True
+    # opts['osqp'] = {"sb":'yes'}
+    # opti.solver('osqp',opts)
+    opts['ipopt'] = {"sb":'yes','print_level':0}
     opti.solver('ipopt',opts)
 
     # turn into function
@@ -414,8 +424,12 @@ def generate_trajectory_optimization_solver(model:dict,upper_level_specs:dict) -
         # solver = opti.to_function("f",[theta],[cost])
         def solver(theta_val):
             opti.set_value(theta,theta_val)
-            opti.solve()
-            return opti.value(cost)
+            try:
+                opti.solve()
+                best_cost = opti.value(cost)
+            except:
+                best_cost = ca.inf
+            return best_cost
 
     return solver
 

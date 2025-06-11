@@ -890,7 +890,7 @@ class Scenario:
 
         # if only one sample is passed, turn certain parameters to length-one lists (for compatibility)
         if n_samples == 1:
-            d, w, theta, x, y = [d], [w], [theta], [x], [y]
+            d, w, x, y = [d], [w], [x], [y]
 
         # create running variable. This variable contains the value of each parameter for a single iteration
         # and it gets updated automatically by the sys_id and the parameter_update subroutines.
@@ -905,7 +905,7 @@ class Scenario:
             #TODO: better check for n_models if theta0 contains many theta. Is it even worth it?
 
             # get number of models (columns of theta)
-            n_models = int(theta[0].shape[1]) if isinstance(theta,list) else theta.shape[1]
+            n_models = theta.shape[1]
 
             # check that mapped (nominal) dynamics have been created
             if not self._mapped:

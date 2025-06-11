@@ -270,6 +270,52 @@ def gradient_descent(rho:float,eta:float=1.0,log:bool=True) -> Tuple[Callable, C
     
     return parameter_update, lambda sim: {}
 
+def heavy_ball(rho,eta,beta_0,log):
+
+    def get_alpha(k):
+        return rho*ca.log(k+2)/(k+1)**eta if log else rho/(k+1)**eta
+
+    alpha_0 = get_alpha(0)
+
+    def get_mu_and_v(k):
+
+        alpha_k = get_alpha(k+1)
+        alpha_k_m1 = get_alpha(k)
+
+        # beta_k = alpha_k / alpha_0 * beta_0
+        beta_k_m1 = alpha_k_m1 / alpha_0 * beta_0
+
+        mu_k = alpha_k * beta_k_m1
+        v_k = alpha_k * ( 1 - beta_k_m1 ) / alpha_k_m1
+
+        return mu_k,v_k
+    
+    def parameter_update(sim:SimVar,k:int) -> dict:
+
+        # get previous parameter
+        p_k_m1 = sim.psi['p']
+
+        # get current parameter
+        p_k = sim.p
+
+        # compute stepsizes
+        mu_k,v_k = get_mu_and_v(k)
+
+        # get gradient
+        j_p = sim.j_p
+
+        # form update
+        p_k_p1 = p_k - mu_k * j_p + v_k * ( p_k - p_k_m1 )
+
+        # return updated parameter and store previous value
+        return {'p':p_k_p1, 'psi': {'p':p_k}}
+
+    def parameter_init(sim:SimVar) -> dict:
+
+        # no momentum in the first iteration
+        return {'p':sim.p}
+
+    return parameter_update, parameter_init
 
 def minibatch_descent(rho:float,eta:float=1.0,log:bool=True,batch_size:int=1) -> Tuple[Callable, Callable]:
     """
