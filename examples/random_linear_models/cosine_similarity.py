@@ -19,6 +19,7 @@ from utils.cost_utils import quad_cost_and_bounds, bound2poly, param2terminal_co
 from src.upper_level import UpperLevel
 from utils.parameter_update import get_robust_descent_solver
 from utils.sample_utils import sample_unit_ball
+from utils.sys_id import get_c_k_func
 
 # cleanup jit files
 cleanup()
@@ -45,7 +46,7 @@ SOLVER = 'daqp'
 MODE = 'robust'
 
 # number of models to simulate
-N_MODELS = 20
+N_MODELS = 100
 
 # horizons
 MPC_HORIZON = 5
@@ -56,9 +57,9 @@ L2_PENALTY = 10
 L1_PENALTY = 10
 
 # system identification parameters
-LAM = 0.2
+LAM = 0.02
 DELTA = 0.01
-R = 0.1
+R = 1e-1
 
 # penalties on constraint violation (mpc)
 MPC_S_QUAD = 15
@@ -100,6 +101,8 @@ columns = [
     ("QP failed", 10),
     ("Cosine similarity nominal", 25),
     ("Cosine similarity robust", 25),
+    ("Relative error nominal", 22),
+    ("Relative error robust", 22),
     ('c_k', 10)
 ]
 
@@ -191,9 +194,9 @@ for i,model in enumerate(model_list):
     Ru = c_r**2 + 1e-6
 
     # create parameter
-    # p = ca.vcat([c_qx,c_qn,c_r])
-    # pf = dyn_dict['theta']
-    p = ca.vcat([c_qx,c_qn,c_r,dyn_dict['theta']])
+    p = ca.vcat([c_qx,c_qn,c_r])
+    pf = dyn_dict['theta']
+    # p = ca.vcat([c_qx,c_qn,c_r,dyn_dict['theta']])
 
     # MPC terminal cost
     Qn = param2terminal_cost(c_qn) + 0.01*ca.SX.eye(n_x)
@@ -220,20 +223,20 @@ for i,model in enumerate(model_list):
                 'solver':SOLVER}
 
     # create MPC
-    # mpc = QP(ingredients=ing,p=p,pf=pf,options=qp_options)
-    mpc = QP(ingredients=ing,p=p,options=qp_options)
+    mpc = QP(ingredients=ing,p=p,pf=pf,options=qp_options)
+    # mpc = QP(ingredients=ing,p=p,options=qp_options)
 
     # create upper level
-    # upper_level = UpperLevel(p=p,pf=pf,horizon=model['dim']['horizon'],mpc=mpc)
-    upper_level = UpperLevel(p=p,horizon=model['dim']['horizon'],mpc=mpc)
+    upper_level = UpperLevel(p=p,pf=pf,horizon=model['dim']['horizon'],mpc=mpc)
+    # upper_level = UpperLevel(p=p,horizon=model['dim']['horizon'],mpc=mpc)
 
     # extract linearized dynamics at the origin
     A = dyn.A_nom(ca.DM(n_x,1),ca.DM(n_u,1),theta0)
     B = dyn.B_nom(ca.DM(n_x,1),ca.DM(n_u,1),theta0)
 
     # compute terminal cost initialization
-    # p_init = ca.vertcat(quad_cost_2_param(Q_true),quad_cost_2_param(Q_true),R_true)
-    p_init = ca.vertcat(quad_cost_2_param(Q_true),quad_cost_2_param(Q_true),R_true,theta0)
+    p_init = ca.vertcat(quad_cost_2_param(Q_true),quad_cost_2_param(Q_true),R_true)
+    # p_init = ca.vertcat(quad_cost_2_param(Q_true),quad_cost_2_param(Q_true),R_true,theta0)
 
     # extract closed-loop variables for upper level
     x_cl = ca.vec(upper_level.param['x_cl'])
@@ -242,7 +245,7 @@ for i,model in enumerate(model_list):
     track_cost, cst_viol_l1, cst_viol_l2 = quad_cost_and_bounds(Q_true,R_true,x_cl,u_cl,x_max,x_min)
 
     # put together
-    cost = track_cost + L2_PENALTY*cst_viol_l2 + L1_PENALTY*cst_viol_l1
+    cost = track_cost #+ L2_PENALTY*cst_viol_l2 + L1_PENALTY*cst_viol_l1
 
     # create upper-level constraints
     Hx,hx,_,_ = bound2poly(x_max,x_min,u_max,u_min,model['dim']['horizon']+1)
@@ -300,6 +303,12 @@ for i,model in enumerate(model_list):
     j_p_true = np.array(j_p_list[-1]).squeeze()
     j_x_true = np.array(j_x_list[-1]).squeeze()
 
+    # compute relative errors
+    def relative_error(v,w):
+        return (np.linalg.norm(v-w) / np.linalg.norm(v))
+    rel_err_nominal = relative_error(j_p_true,j_p_nominal)
+    rel_err_robust = relative_error(j_p_true,np.array(j_p_robust).squeeze())
+
     # compute cosine similarities
     def cosine_similarity(v,w):
         return np.dot(v,w) / ( np.linalg.norm(v) * np.linalg.norm(w) )
@@ -307,4 +316,4 @@ for i,model in enumerate(model_list):
     cos_robust = cosine_similarity(j_p_true, np.array(j_p_robust).squeeze())
 
     # Print formatted row
-    print(format_str.format(i, str(qp_failed), cos_nominal, cos_robust, str(c_k)))
+    print(format_str.format(i, str(qp_failed), cos_nominal, cos_robust, rel_err_nominal, rel_err_robust, str(c_k)))
