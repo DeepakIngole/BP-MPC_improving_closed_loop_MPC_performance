@@ -15,9 +15,9 @@ from src.dynamics import Dynamics
 from src.qp import QP
 from src.ingredients import Ingredients
 from utils.cleanup import cleanup
-from utils.cost_utils import quad_cost_and_bounds,bound2poly,param2terminal_cost,quad_cost_2_param
+from utils.cost_utils import quad_cost_and_bounds,bound2poly,param2terminal_cost,quad_cost_2_param,dare2param
 from src.upper_level import UpperLevel
-from utils.parameter_update import robust_gradient_descent, gradient_descent, robust_adam, adam
+from utils.parameter_update import robust_gradient_descent, gradient_descent, robust_adam, adam, heavy_ball
 from utils.sys_id import rls, rls_robust
 from utils.sample_utils import sample_unit_ball
 
@@ -50,12 +50,12 @@ N_MODELS = 10
 
 # horizons
 MPC_HORIZON = 5
-ITERATIONS = 500
+ITERATIONS = 100
 
 # penalties on constraint violation (closed-loop)
 L2_PENALTY = 100
 L1_PENALTY = 100
-L_PROJ = 250
+L_PROJ = 20
 
 # Adam parameters
 ADAM_ALPHA = 0.01
@@ -63,10 +63,27 @@ ADAM_EPSILON = 1e-7
 ADAM_BETA_1 = 0.6
 ADAM_BETA_2 = 0.9
 
-# gd parameter
-RHO = 1e-5
+# gd paramers (no CE)
+# RHO = 1e-3
+# ETA = 0.6
+# LOG = True
+
+# gd paramers (CE)
+# RHO = 1e-2
+# ETA = 0.6
+# LOG = True
+
+# heavy ball parameters (no CE)
+# RHO = 1e-3
+# ETA = 0.6
+# LOG = True
+# BETA0 = 0.3
+
+# # heavy ball parameters (CE)
+RHO = 0.02
 ETA = 0.6
 LOG = True
+BETA0 = 0.9
 
 # system identification parameters
 LAM = 1
@@ -78,12 +95,17 @@ S = 2
 MPC_S_QUAD = 15
 MPC_S_LIN = 25
 
-# update algorithm (options: 'Adam', 'gd')
-UPDATE_ALGORITHM = 'gd'
+# update algorithm (options: 'Adam', 'gd', or 'heavy_ball')
+UPDATE_ALGORITHM = 'Adam'
 
 # set to true to run the algorithm on additional unseen noise samples
 VALIDATE = True
 
+# select a single model in the list (set to None to simulate all models)
+MODEL_SELECT = None
+
+# choose if certainty equivalence should be used
+CERTAINTY_EQUIVALENCE = True
 
 #### GET THE MODELS -----------------------------------------------------------------------------
 
@@ -114,30 +136,46 @@ with open(all_models[most_recent_index], 'rb') as f:
 
 ALL_MODELS = []
 
-# setup printout
-columns = [("MODEL", 10),
-           ("Constraint violation (first-last)", 33),
-           ("Cost (first-last-increment)", 30),
-           ("Cost on holdout set", 19),
-           ("Best achievable cost", 25),
-           ("QP failed", 10),
-           ("Uncertainty radius", 18),
-           ('Error on identified theta', 25)]
+# we assume all models either use or don't use noise
+use_noise = model_list[0]['dim']['w'] > 0
 
-# Create a format string based on column widths
-format_str = " | ".join(f"{{:^{width}}}" for _, width in columns)
+# choose models to simulate
+model_to_simulate = [model_list[MODEL_SELECT]] if MODEL_SELECT is not None else model_list
 
-# Print header
-header = format_str.format(*(name for name, _ in columns))
-separator = "-+-".join("-" * width for _, width in columns)
-print(header)
-print(separator)
+# select verbosity
+simulation_verbosity = 0 if len(model_to_simulate) > 1 else 1
+
+if MODEL_SELECT is None:
+    # setup printout
+    if use_noise:
+        columns = [("MODEL", 10),
+            ("Constraint violation (first-last)", 33),
+            ("Cost (first-last-increment)", 30),
+            ("Cost on holdout set", 19),
+            ("Best achievable cost", 25),
+            ("QP failed", 10),
+            ("Uncertainty radius", 18),
+            ('Error on identified theta', 25)]
+    else:
+        columns = [("MODEL", 10),
+            ("Constraint violation (first-last)", 33),
+            ("Cost (first-last-increment)", 30),
+            ("Best achievable cost", 25),
+            ("QP failed", 10),
+            ("Uncertainty radius", 18),
+            ('Error on identified theta', 25)]
+
+    # Create a format string based on column widths
+    format_str = " | ".join(f"{{:^{width}}}" for _, width in columns)
+
+    # Print header
+    header = format_str.format(*(name for name, _ in columns))
+    separator = "-+-".join("-" * width for _, width in columns)
+    print(header)
+    print(separator)
 
 # loop through all models
-for i,model in enumerate(model_list):
-
-    # check if model uses noise
-    use_noise = model['dim']['w'] > 0
+for i,model in enumerate(model_to_simulate):
 
     # dictionary to generate dynamics
     dyn_dict = {}
@@ -213,9 +251,11 @@ for i,model in enumerate(model_list):
     Ru = c_r**2 + 1e-6
 
     # create parameter
-    p = ca.vcat([c_qx,c_qn,c_r,dyn_dict['theta']])
-    # p = ca.vcat([c_qx,c_qn,c_r])
-    # pf = dyn_dict['theta']
+    if CERTAINTY_EQUIVALENCE:
+        p = ca.vcat([c_qx,c_qn,c_r])
+        pf = dyn_dict['theta']
+    else:
+        p = ca.vcat([c_qx,c_qn,c_r,dyn_dict['theta']])
 
     # MPC terminal cost
     Qn = param2terminal_cost(c_qn) + 0.01*ca.SX.eye(n_x)
@@ -241,21 +281,26 @@ for i,model in enumerate(model_list):
                 'compile_jac':COMPILE_JAC,
                 'solver':SOLVER}
 
-    # create MPC
-    mpc = QP(ingredients=ing, p=p, options=qp_options)
-    # mpc = QP(ingredients=ing, p=p, pf=pf, options=qp_options)
-
-    # create upper level
-    upper_level = UpperLevel(p=p, horizon=model['dim']['horizon'], mpc=mpc)
-    # upper_level = UpperLevel(p=p, pf=pf, horizon=model['dim']['horizon'], mpc=mpc)
-
     # extract linearized dynamics at the origin
     A = dyn.A_nom(ca.DM(n_x,1),ca.DM(n_u,1),theta0)
     B = dyn.B_nom(ca.DM(n_x,1),ca.DM(n_u,1),theta0)
 
-    # compute terminal cost initialization
-    p_init = ca.vertcat(quad_cost_2_param(Q_true), quad_cost_2_param(Q_true), R_true, theta0)
-    # p_init = ca.vertcat(dare2param(A, B, Q_true, R_true), 1e-1)
+    if CERTAINTY_EQUIVALENCE:
+        # create MPC
+        mpc = QP(ingredients=ing, p=p, pf=pf, options=qp_options)
+        # create upper level
+        upper_level = UpperLevel(p=p, pf=pf, horizon=model['dim']['horizon'], mpc=mpc)
+        # compute terminal cost initialization
+        # p_init = ca.vertcat(quad_cost_2_param(Q_true), dare2param(A, B, Q_true, R_true), R_true)
+        p_init = ca.vertcat(quad_cost_2_param(Q_true), quad_cost_2_param(Q_true), R_true)
+    else:
+        # create MPC
+        mpc = QP(ingredients=ing, p=p, options=qp_options)
+        # create upper level
+        upper_level = UpperLevel(p=p, horizon=model['dim']['horizon'], mpc=mpc)
+        # compute terminal cost initialization
+        # p_init = ca.vertcat(quad_cost_2_param(Q_true), dare2param(A, B, Q_true, R_true), R_true, theta0)
+        p_init = ca.vertcat(quad_cost_2_param(Q_true), quad_cost_2_param(Q_true), R_true, theta0)
 
     if MODE == 'robust':
         
@@ -298,6 +343,8 @@ for i,model in enumerate(model_list):
         elif UPDATE_ALGORITHM == 'Adam':
             parameter_update, parameter_init = adam(alpha=ADAM_ALPHA, beta_1=ADAM_BETA_1, beta_2=ADAM_BETA_2,
                                                     epsilon=ADAM_EPSILON)
+        elif UPDATE_ALGORITHM == 'heavy_ball':
+            parameter_update, parameter_init = heavy_ball(rho=RHO, eta=ETA, beta_0 = BETA0, log=LOG)
         else:
             raise Exception('Unknown UPDATE_ALGORITHM')
 
@@ -316,14 +363,17 @@ for i,model in enumerate(model_list):
     c_k_cl = upper_level.param['psi_cl_c']
     theta_cl = upper_level.param['psi_cl_theta']
 
+    # generate components of the cost
     track_cost, cst_viol_l1, cst_viol_l2 = quad_cost_and_bounds(Q_true,R_true,x_cl,u_cl,x_max,x_min)
 
-    # create penalty for projecting onto the confidence region
-    # projection_penalty = ca.if_else(ca.norm_2(p[-theta0.shape[0]:]-theta_cl) <= c_k_cl,0,(ca.norm_2(p[-theta0.shape[0]:]-theta_cl) - c_k_cl)**2)
-    projection_penalty = (p[-theta0.shape[0]:]-theta_cl).T@(p[-theta0.shape[0]:]-theta_cl)
-
-    # put together
-    cost = track_cost + L2_PENALTY*cst_viol_l2 + L1_PENALTY*cst_viol_l1 + L_PROJ*projection_penalty
+    # form cost
+    if CERTAINTY_EQUIVALENCE:
+        cost = track_cost + L2_PENALTY*cst_viol_l2 + L1_PENALTY*cst_viol_l1
+    else:
+        # create penalty for projecting onto the confidence region
+        # projection_penalty = ca.if_else(ca.norm_2(p[-theta0.shape[0]:]-theta_cl) <= c_k_cl,0,(ca.norm_2(p[-theta0.shape[0]:]-theta_cl) - c_k_cl)**2)
+        projection_penalty = (p[-theta0.shape[0]:]-theta_cl).T@(p[-theta0.shape[0]:]-theta_cl)
+        cost = track_cost + L2_PENALTY*cst_viol_l2 + L1_PENALTY*cst_viol_l1 + L_PROJ*projection_penalty
 
     # create upper-level constraints
     Hx,hx,_,_ = bound2poly(x_max,x_min,u_max,u_min,model['dim']['horizon']+1)
@@ -345,7 +395,7 @@ for i,model in enumerate(model_list):
     scenario = Scenario(dyn,mpc,upper_level)
 
     # initialize
-    init_dict = {'p':p_init,'pf':theta0,'x': x0,'theta':theta0}
+    init_dict = {'p':p_init,'pf':theta0,'x': x0,'theta':theta0} if CERTAINTY_EQUIVALENCE else {'p':p_init,'x': x0,'theta':theta0}
     if use_noise:
         init_dict['w'] = model['w0']
     # needed for compatibility
@@ -360,7 +410,7 @@ for i,model in enumerate(model_list):
 
     # update options
     sim_options = {'save_memory': True, 'use_true_model': False, 'max_k': ITERATIONS,
-                   'true_theta': np.array(model['theta_true']), 'verbosity': 0}
+                   'true_theta': np.array(model['theta_true']), 'verbosity': simulation_verbosity}
     if MODE == 'robust':
         sim_options['simulate_parallel_models'] = True
 
@@ -403,7 +453,7 @@ for i,model in enumerate(model_list):
         qp_failed = 'Sim' if qp_failed_closed_loop else 'Never'
 
         # validate solution on unseen samples
-        if qp_failed == 'Never' and VALIDATE:
+        if use_noise and VALIDATE and qp_failed == 'Never':
 
             # update initialization dictionary => add final parameter value and unseen noise
             init_dict_validate = init_dict.copy()
@@ -419,7 +469,7 @@ for i,model in enumerate(model_list):
 
             # compute mean cost
             mean_cost_validate = np.mean(np.array(cost_validate))
-        
+
         else:
 
             mean_cost_validate = np.inf
@@ -445,20 +495,60 @@ for i,model in enumerate(model_list):
             # solve trajectory optimization problem
             nlp_out,nlp_solved = NLP(x0,x_warm,u_warm)
 
-            best_cost = nlp_out.cost if nlp_solved else ca.inf
+            best_cost = np.array(nlp_out.cost).squeeze() if nlp_solved else ca.inf
         
         else:
             
             # use the best cost from the model
             best_cost = np.mean(np.array(model['best_cost_testing'])) if use_noise else model['best_cost']
-
+                                
         # add to table
-        print(format_str.format(i, f'{ca.sum1(ca.fmax(cst[0], 0))} | {ca.sum1(ca.fmax(cst[-1], 0))}',
-                                f'{cost[0]} | {cost[-1]} | {cost[-1] - cost[0]}',
-                                '{0:04f}'.format(mean_cost_validate),
-                                f'{best_cost} ({best_cost - cost[-1]})',
-                                qp_failed,
-                                '{0:0.3f}'.format(c_k[1]) + ' | ' + '{0:0.3f}'.format(c_k[-1]),
-                                '{0:0.3f}'.format(ca.norm_2(model['theta_true']-theta_last).full().squeeze()) + ' | ' \
-                                 + '{0:0.3f}'.format(ca.norm_2(model['theta_true']-theta_first).full().squeeze()) + ' | ' \
-                                 + '{0:0.3f}'.format(ca.norm_2(model['theta_true']-p_list[-1][-theta0.shape[0]:]).full().squeeze())))
+        if len(model_to_simulate) > 1:
+
+            if CERTAINTY_EQUIVALENCE:
+
+                if use_noise:
+                            
+                    print(format_str.format(i, f'{ca.sum1(ca.fmax(cst[0], 0))} | {ca.sum1(ca.fmax(cst[-1], 0))}',
+                                            f'{cost[0]} | {cost[-1]} | {cost[-1] - cost[0]}',
+                                            '{0:04f}'.format(mean_cost_validate),
+                                            f'{best_cost} ({best_cost - cost[-1]})',
+                                            qp_failed,
+                                            '{0:0.3f}'.format(c_k[1]) + ' | ' + '{0:0.3f}'.format(c_k[-1]),
+                                            '{0:0.3f}'.format(ca.norm_2(model['theta_true']-theta_first).full().squeeze()) + ' | ' \
+                                            + '{0:0.3f}'.format(ca.norm_2(model['theta_true']-theta_last).full().squeeze())))
+                
+                else:
+
+                    print(format_str.format(i, f'{ca.sum1(ca.fmax(cst[0], 0))} | {ca.sum1(ca.fmax(cst[-1], 0))}',
+                                            f'{cost[0]} | {cost[-1]} | {cost[-1] - cost[0]}',
+                                            '{0:0.3f} '.format(best_cost) +  f'({best_cost - cost[-1]})',
+                                            qp_failed,
+                                            '{0:0.3f}'.format(c_k[1]) + ' | ' + '{0:0.3f}'.format(c_k[-1]),
+                                            '{0:0.3f}'.format(ca.norm_2(model['theta_true']-theta_first).full().squeeze()) + ' | ' \
+                                            + '{0:0.3f}'.format(ca.norm_2(model['theta_true']-theta_last).full().squeeze())))
+                    
+            else:
+
+                if use_noise:
+                            
+                    print(format_str.format(i, f'{ca.sum1(ca.fmax(cst[0], 0))} | {ca.sum1(ca.fmax(cst[-1], 0))}',
+                                            f'{cost[0]} | {cost[-1]} | {cost[-1] - cost[0]}',
+                                            '{0:04f}'.format(mean_cost_validate),
+                                            f'{best_cost} ({best_cost - cost[-1]})',
+                                            qp_failed,
+                                            '{0:0.3f}'.format(c_k[1]) + ' | ' + '{0:0.3f}'.format(c_k[-1]),
+                                            '{0:0.3f}'.format(ca.norm_2(model['theta_true']-theta_last).full().squeeze()) + ' | ' \
+                                            + '{0:0.3f}'.format(ca.norm_2(model['theta_true']-theta_first).full().squeeze()) + ' | ' \
+                                            + '{0:0.3f}'.format(ca.norm_2(model['theta_true']-p_list[-1][-theta0.shape[0]:]).full().squeeze())))
+                
+                else:
+
+                    print(format_str.format(i, f'{ca.sum1(ca.fmax(cst[0], 0))} | {ca.sum1(ca.fmax(cst[-1], 0))}',
+                                            f'{cost[0]} | {cost[-1]} | {cost[-1] - cost[0]}',
+                                            '{0:0.3f} '.format(best_cost) +  f'({best_cost - cost[-1]})',
+                                            qp_failed,
+                                            '{0:0.3f}'.format(c_k[1]) + ' | ' + '{0:0.3f}'.format(c_k[-1]),
+                                            '{0:0.3f}'.format(ca.norm_2(model['theta_true']-theta_last).full().squeeze()) + ' | ' \
+                                            + '{0:0.3f}'.format(ca.norm_2(model['theta_true']-theta_first).full().squeeze()) + ' | ' \
+                                            + '{0:0.3f}'.format(ca.norm_2(model['theta_true']-p_list[-1][-theta0.shape[0]:]).full().squeeze())))
