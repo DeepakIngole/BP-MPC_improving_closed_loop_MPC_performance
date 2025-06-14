@@ -435,7 +435,7 @@ class UpperLevel:
         self._sys_id_init = sys_id_init if sys_id_init is not None else None
 
         # check if psi is passed in sys_id_init or parameter_init
-        psi = sys_id_init()
+        psi = sys_id_init is not None
 
         # if psi variables are present they must be added to the symbolic variables in upper_level
         if psi:
