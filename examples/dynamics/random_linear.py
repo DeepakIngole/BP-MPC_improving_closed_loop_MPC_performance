@@ -35,6 +35,7 @@ def dynamics(
             - 'x_next_nom': Symbolic expression for nominal successor state.
         true_theta (ca.DM): True parameter vector (flattened Jacobian of x_next w.r.t. [x; u]).
         poles (np.ndarray): Array of generated continuous-time poles.
+        dict: contains A and B in SX format
     Raises:
         AssertionError: If pole_mag is not in the form [min, max] with min <= max.
     Note:
@@ -102,4 +103,4 @@ def dynamics(
     out['x_next'] = x_next
     out['x_next_nom'] = x_next_nom
 
-    return out,true_theta,poles
+    return out,true_theta,poles,{'A':A,'B':B}

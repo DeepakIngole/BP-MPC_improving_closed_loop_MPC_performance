@@ -21,10 +21,14 @@ NX = 4
 POLE_RANGE = (-5.0,1.0)
 
 # horizons
-HORIZON = 50
+HORIZON = 10
 
 # uncertainty on poles
-POLE_UNCERTAINTY = 4
+UNCERTAINTY = 0.05
+
+# choose 'full' for uncertainty on the entire A and B matrices.
+# choose 'poles' for uncertainty on the poles only.
+MODE = 'full'
 
 # how spread out the initial condition is
 X0_MAG = 1.5
@@ -49,12 +53,13 @@ def generate_multiple(
         horizon:int = 20,
         n_models:int = 1,
         pole_range:Optional[Tuple[float,float]] = None,
-        pole_uncertainty:float = 1,
+        uncertainty:float = 1,
         x0_mag:float = 0.0,
         noise_mag:float = 0.0,
         feasible_only:bool = False,
         upper_level_specs:dict = None,
-        noise_samples:int = 1
+        noise_samples:int = 1,
+        mode:str = 'full'
     ) -> List[dict]:
     """
     Generates a list of random linear models with specified properties.
@@ -86,7 +91,7 @@ def generate_multiple(
         horizon (int, optional): Prediction horizon. Must be positive. Default is 20.
         n_models (int, optional): Number of models to generate. Must be positive. Default is 1.
         pole_range (Tuple[float, float], optional): Range [min, max] for the real part of the poles. Default is [-5, 1].
-        pole_uncertainty (float, optional): Uncertainty range for the poles. Must be non-negative. Default is 1.
+        uncertainty (float, optional): Uncertainty range for the system. Must be non-negative. Default is 1.
         x0_mag (float, optional): Magnitude of the initial state dispersion. Must be non-negative. Default is 0, which 
             leads to x0 = 1.
         noise_mag (float, optional): Magnitude of the process noise. Must be non-negative. Default is 0.1.
@@ -94,6 +99,8 @@ def generate_multiple(
         upper_level_specs (dict, optional): Specifications of the optimization problem (meaningful only if feasible_only is
             set to True). It must contain the keys ['Q', 'R', 'x_min', 'x_max', 'u_min', 'u_max'] (see above for details).
         noise_samples (int, optional): Number of generated noise samples (each containing a trajectory of noise realizations).
+        mode (str, optional): decides whether undertainty is applied to poles or to entire A and B matrices (possible options 
+            are 'full' and 'poles', defaults to 'full').
 
     Returns:
         List[dict]: A list of dictionaries, each representing a generated random linear model.
@@ -115,7 +122,7 @@ def generate_multiple(
     assert horizon > 0, 'Horizon must be positive.'
     assert n_models > 0, 'Number of models must be positive.'
     assert pole_range[0] <= pole_range[1], 'Pass pole_range as pole_range = [pole_min, pole_max] with pole_min <= pole_max.'
-    assert pole_uncertainty >= 0, 'Pole uncertainty range must be non-negative.'
+    assert uncertainty >= 0, 'Uncertainty range must be non-negative.'
     assert x0_mag >= 0, 'Dispersion of initial state must be non-negative.'
     assert noise_mag >= 0, 'Noise magnitude must be non-negative.'
 
@@ -137,9 +144,10 @@ def generate_multiple(
                     n_x=n_x,
                     pole_range=pole_range,
                     horizon=horizon,
-                    pole_uncertainty=pole_uncertainty,
+                    uncertainty=uncertainty,
                     x0_mag=x0_mag,
-                    use_noise=use_noise
+                    use_noise=use_noise,
+                    mode=mode
                 )
         
         if feasible_only:
@@ -233,24 +241,27 @@ def generate_single(
         n_x:int=4,
         horizon:int=20,
         pole_range:Optional[Tuple[float,float]]=None,
-        pole_uncertainty:float=1.0,
+        uncertainty:float=1.0,
         x0_mag:float=0.0,
         use_noise:bool=True,
+        mode:str='full'
     ) -> dict:
     """
     Generates a single random linear system model with optional uncertainty and noise.
     This function creates a random linear system (e.g., for control or identification experiments)
     with specified state dimension, sampling time, and pole range. It can also introduce uncertainty
-    in the system poles.
+    in the system poles or matrices.
 
     Args:
         sampling_time (float, optional): Discretization time step for the system. Defaults to 0.15.
         n_x (int, optional): Number of states in the system. Defaults to 4.
         horizon (int, optional): Time horizon for noise realization. Defaults to 20.
         pole_range (Tuple[float, float], optional): Range for sampling the true system poles. Defaults to [-5, 1].
-        pole_uncertainty (float, optional): Magnitude of uncertainty to apply to the poles. Defaults to 1.0.
+        uncertainty (float, optional): Magnitude of uncertainty to apply to the system. Defaults to 1.0.
         x0_mag (float, optional): Magnitude of the initial state dispersion. If equal to 0, defaults to x0 = 1.
         use_noise (bool, optional): Whether to include noise in the system dynamics. Defaults to True.
+        mode (str, optional): decides whether undertainty is applied to poles or to entire A and B matrices
+            (possible options are 'full' and 'poles', defaults to 'full').
     
     Returns:
         dict: A dictionary containing:
@@ -269,7 +280,7 @@ def generate_single(
         pole_range = [-5.0, 1.0]
 
     # create dictionary with parameters of cart pendulum
-    dyn_dict,true_theta,true_poles = random_linear.dynamics(Ts=sampling_time,n_x=n_x,use_w=use_noise,pole_mag=pole_range)
+    dyn_dict,true_theta,true_poles,mats = random_linear.dynamics(Ts=sampling_time,n_x=n_x,use_w=use_noise,pole_mag=pole_range)
 
     # get inputs to x_next
     func_in = [ dyn_dict[key] for key in ['x','u','w'] if key in dyn_dict ]
@@ -288,12 +299,34 @@ def generate_single(
     # set initial conditions
     x0 = ca.DM.ones(n_x,1) if x0_mag == 0 else ca.DM( x0_mag * (np.ones((n_x,1)) + 2*np.random.rand(n_x,1)) )
 
-    # create new system with uncertainty by sampling new poles within the specified
-    # uncertainty range
-    poles_uncertainty_unit = np.ones(n_x)+2*np.random.rand(n_x)
-    poles_uncertainty = pole_uncertainty/np.linalg.norm(poles_uncertainty_unit) * poles_uncertainty_unit
-    poles_uncertain = np.multiply(poles_uncertainty_unit,true_poles)
-    A_uncertain,B_uncertain,_ = poles_to_linear_sys(poles=poles_uncertain,sampling_time=sampling_time)
+    if mode == 'poles':
+
+        # create new system with uncertainty by sampling new poles within the specified uncertainty range
+        poles_uncertainty_unit = 2*np.random.rand(n_x)
+        poles_uncertainty = np.ones(n_x) + uncertainty/np.linalg.norm(poles_uncertainty_unit) * poles_uncertainty_unit
+        # poles_uncertainty = uncertainty * poles_uncertainty_unit
+        poles_uncertain = np.multiply(poles_uncertainty_unit,true_poles)
+
+        # apply to matrices
+        A_uncertain,B_uncertain,_ = poles_to_linear_sys(poles=poles_uncertain,sampling_time=sampling_time)
+
+    elif mode == 'full':
+        
+        # form uncertainty
+        mat_A_uncertainty = np.ones((n_x,n_x))+2*uncertainty*np.random.rand(n_x,n_x)
+        mat_B_uncertainty = np.ones((n_x,1))+2*uncertainty*np.random.rand(n_x,1)
+
+        # apply to matrices
+        A_uncertain = ca.times(mats['A'],mat_A_uncertainty)
+        B_uncertain = ca.times(mats['B'],mat_B_uncertainty)
+
+        # compute poles of nominal A matrix
+        poles_uncertain = ca.DM_nan(n_x,1) #np.linalg.eig(ca.DM(A_uncertain))[0]
+
+    else:
+        raise Exception('Mode should be either poles or full.')
+
+    # generate nominal theta
     theta0 = ca.DM(ca.vertcat(ca.vec(A_uncertain),ca.vec(B_uncertain)))
 
     # sample noise if requested
@@ -447,12 +480,13 @@ if __name__ == "__main__":
         horizon=HORIZON,
         n_models=N_MODELS,
         pole_range=POLE_RANGE,
-        pole_uncertainty=POLE_UNCERTAINTY,
+        uncertainty=UNCERTAINTY,
         feasible_only=FEASIBLE_ONLY,
         upper_level_specs=UPPER_LEVEL_SPECS,
         x0_mag=X0_MAG,
         noise_mag=NOISE_MAG,
-        noise_samples=NOISE_SAMPLES
+        noise_samples=NOISE_SAMPLES,
+        mode=MODE
     )
 
     # get current date and time

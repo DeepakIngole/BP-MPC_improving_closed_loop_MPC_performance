@@ -46,7 +46,7 @@ SOLVER = 'daqp'
 MODE = 'robust'
 
 # number of models to simulate
-N_MODELS = 100
+N_MODELS = 200
 
 # horizons
 MPC_HORIZON = 5
@@ -57,7 +57,7 @@ L2_PENALTY = 10
 L1_PENALTY = 10
 
 # system identification parameters
-LAM = 0.02
+LAM = 1
 DELTA = 0.01
 R = 1e-1
 
@@ -265,7 +265,7 @@ for i,model in enumerate(model_list):
     # compute confidence bound
     # c_k = get_c_k_func(R=R, n_theta=scenario.dim['theta'], lam=LAM, delta=DELTA,
     #                    S=ca.norm_2(model['theta_true'] - theta0))(LAM)
-    c_k = LAM*ca.norm_2(model['theta_true'] - theta0)
+    c_k = LAM*np.linalg.norm(model['theta_true'] - theta0, ord=np.inf)
 
     # initialize theta: first add randomized values
     theta_init_random = ca.DM(theta0 + c_k * sample_unit_ball(scenario.dim['theta'], N_MODELS).T)
