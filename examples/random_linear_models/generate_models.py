@@ -21,10 +21,10 @@ NX = 4
 POLE_RANGE = (-5.0,1.0)
 
 # horizons
-HORIZON = 10
+HORIZON = 50
 
-# uncertainty on poles
-UNCERTAINTY = 0.05
+# uncertainty range
+UNCERTAINTY = 1
 
 # choose 'full' for uncertainty on the entire A and B matrices.
 # choose 'poles' for uncertainty on the poles only.
@@ -38,7 +38,7 @@ NOISE_MAG = 0.0
 NOISE_SAMPLES = 0
 
 # number of models used in robust GD
-N_MODELS = 10
+N_MODELS = 100
 
 # whether only feasible models should be generated
 FEASIBLE_ONLY = True

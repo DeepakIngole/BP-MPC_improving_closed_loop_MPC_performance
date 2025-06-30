@@ -50,40 +50,12 @@ N_MODELS = 10
 
 # horizons
 MPC_HORIZON = 5
-ITERATIONS = 100
+ITERATIONS = 500
 
 # penalties on constraint violation (closed-loop)
 L2_PENALTY = 100
 L1_PENALTY = 100
 L_PROJ = 20
-
-# Adam parameters
-ADAM_ALPHA = 0.01
-ADAM_EPSILON = 1e-7
-ADAM_BETA_1 = 0.6
-ADAM_BETA_2 = 0.9
-
-# gd paramers (no CE)
-# RHO = 1e-3
-# ETA = 0.6
-# LOG = True
-
-# gd paramers (CE)
-# RHO = 1e-2
-# ETA = 0.6
-# LOG = True
-
-# heavy ball parameters (no CE)
-# RHO = 1e-3
-# ETA = 0.6
-# LOG = True
-# BETA0 = 0.3
-
-# # heavy ball parameters (CE)
-RHO = 0.02
-ETA = 0.6
-LOG = True
-BETA0 = 0.9
 
 # system identification parameters
 LAM = 1
@@ -106,6 +78,60 @@ MODEL_SELECT = None
 
 # choose if certainty equivalence should be used
 CERTAINTY_EQUIVALENCE = True
+
+### CHOOSE ALGORITHM ----------------------------------------------------------------------------
+
+if UPDATE_ALGORITHM == 'Adam':
+
+    # Adam parameters
+    ADAM_ALPHA = 0.01
+    ADAM_EPSILON = 1e-7
+    ADAM_BETA_1 = 0.6
+    ADAM_BETA_2 = 0.9
+
+    # save in dictionary
+    hyper_parameters = {'alg':UPDATE_ALGORITHM, 'alpha':ADAM_ALPHA, 'epsilon':ADAM_EPSILON, 'beta_1':ADAM_BETA_1, 'beta_2':ADAM_BETA_2}
+
+elif UPDATE_ALGORITHM == 'gd':
+
+    if CERTAINTY_EQUIVALENCE:
+
+        # gd paramers (CE)
+        RHO = 1e-2
+        ETA = 0.6
+        LOG = True
+    
+    else:
+
+        # gd paramers (no CE)
+        RHO = 1e-3
+        ETA = 0.6
+        LOG = True
+
+    # save in dictionary
+    hyper_parameters = {'alg':UPDATE_ALGORITHM, 'rho':RHO, 'eta':ETA, 'log':LOG}
+
+elif UPDATE_ALGORITHM == 'heavy_ball':
+
+    if CERTAINTY_EQUIVALENCE:
+
+        # heavy ball parameters (CE)
+        RHO = 0.035
+        ETA = 0.6
+        LOG = True
+        BETA0 = 0.9
+        
+    else:
+        
+        # heavy ball parameters (no CE)
+        RHO = 1e-3
+        ETA = 0.6
+        LOG = True
+        BETA0 = 0.3
+
+    # save in dictionary
+    hyper_parameters = {'alg':UPDATE_ALGORITHM, 'rho':RHO, 'eta':ETA, 'log':LOG, 'beta0':BETA0}
+
 
 #### GET THE MODELS -----------------------------------------------------------------------------
 
@@ -173,6 +199,12 @@ if MODEL_SELECT is None:
     separator = "-+-".join("-" * width for _, width in columns)
     print(header)
     print(separator)
+
+    # store string
+    main_printout = [header,separator]
+
+    # store results
+    results_list = []
 
 # loop through all models
 for i,model in enumerate(model_to_simulate):
@@ -445,8 +477,9 @@ for i,model in enumerate(model_to_simulate):
         cost = [sim.cost for sim in sim_list]
         cst = [sim.cst for sim in sim_list]
         c_k = [sim.psi['c'] for sim in sim_list]
-        theta_last = sim_list[-1].psi['theta']
-        theta_first = sim_list[0].psi['theta']
+        theta_list = [sim.psi['theta'] for sim in sim_list]
+        theta_last = theta_list[-1]
+        theta_first = theta_list[0]
         p_list = [sim.p for sim in sim_list]
 
         # update qp_failed flag
@@ -505,34 +538,35 @@ for i,model in enumerate(model_to_simulate):
         # add to table
         if len(model_to_simulate) > 1:
 
+            # printout
             if CERTAINTY_EQUIVALENCE:
 
                 if use_noise:
                             
-                    print(format_str.format(i, f'{ca.sum1(ca.fmax(cst[0], 0))} | {ca.sum1(ca.fmax(cst[-1], 0))}',
+                    new_string = format_str.format(i, f'{ca.sum1(ca.fmax(cst[0], 0))} | {ca.sum1(ca.fmax(cst[-1], 0))}',
                                             f'{cost[0]} | {cost[-1]} | {cost[-1] - cost[0]}',
                                             '{0:04f}'.format(mean_cost_validate),
                                             f'{best_cost} ({best_cost - cost[-1]})',
                                             qp_failed,
                                             '{0:0.3f}'.format(c_k[1]) + ' | ' + '{0:0.3f}'.format(c_k[-1]),
                                             '{0:0.3f}'.format(ca.norm_2(model['theta_true']-theta_first).full().squeeze()) + ' | ' \
-                                            + '{0:0.3f}'.format(ca.norm_2(model['theta_true']-theta_last).full().squeeze())))
+                                            + '{0:0.3f}'.format(ca.norm_2(model['theta_true']-theta_last).full().squeeze()))
                 
                 else:
 
-                    print(format_str.format(i, f'{ca.sum1(ca.fmax(cst[0], 0))} | {ca.sum1(ca.fmax(cst[-1], 0))}',
+                    new_string = format_str.format(i, f'{ca.sum1(ca.fmax(cst[0], 0))} | {ca.sum1(ca.fmax(cst[-1], 0))}',
                                             f'{cost[0]} | {cost[-1]} | {cost[-1] - cost[0]}',
                                             '{0:0.3f} '.format(best_cost) +  f'({best_cost - cost[-1]})',
                                             qp_failed,
                                             '{0:0.3f}'.format(c_k[1]) + ' | ' + '{0:0.3f}'.format(c_k[-1]),
                                             '{0:0.3f}'.format(ca.norm_2(model['theta_true']-theta_first).full().squeeze()) + ' | ' \
-                                            + '{0:0.3f}'.format(ca.norm_2(model['theta_true']-theta_last).full().squeeze())))
+                                            + '{0:0.3f}'.format(ca.norm_2(model['theta_true']-theta_last).full().squeeze()))
                     
             else:
 
                 if use_noise:
                             
-                    print(format_str.format(i, f'{ca.sum1(ca.fmax(cst[0], 0))} | {ca.sum1(ca.fmax(cst[-1], 0))}',
+                    new_string = format_str.format(i, f'{ca.sum1(ca.fmax(cst[0], 0))} | {ca.sum1(ca.fmax(cst[-1], 0))}',
                                             f'{cost[0]} | {cost[-1]} | {cost[-1] - cost[0]}',
                                             '{0:04f}'.format(mean_cost_validate),
                                             f'{best_cost} ({best_cost - cost[-1]})',
@@ -540,15 +574,42 @@ for i,model in enumerate(model_to_simulate):
                                             '{0:0.3f}'.format(c_k[1]) + ' | ' + '{0:0.3f}'.format(c_k[-1]),
                                             '{0:0.3f}'.format(ca.norm_2(model['theta_true']-theta_last).full().squeeze()) + ' | ' \
                                             + '{0:0.3f}'.format(ca.norm_2(model['theta_true']-theta_first).full().squeeze()) + ' | ' \
-                                            + '{0:0.3f}'.format(ca.norm_2(model['theta_true']-p_list[-1][-theta0.shape[0]:]).full().squeeze())))
+                                            + '{0:0.3f}'.format(ca.norm_2(model['theta_true']-p_list[-1][-theta0.shape[0]:]).full().squeeze()))
                 
                 else:
 
-                    print(format_str.format(i, f'{ca.sum1(ca.fmax(cst[0], 0))} | {ca.sum1(ca.fmax(cst[-1], 0))}',
+                    new_string = format_str.format(i, f'{ca.sum1(ca.fmax(cst[0], 0))} | {ca.sum1(ca.fmax(cst[-1], 0))}',
                                             f'{cost[0]} | {cost[-1]} | {cost[-1] - cost[0]}',
                                             '{0:0.3f} '.format(best_cost) +  f'({best_cost - cost[-1]})',
                                             qp_failed,
                                             '{0:0.3f}'.format(c_k[1]) + ' | ' + '{0:0.3f}'.format(c_k[-1]),
                                             '{0:0.3f}'.format(ca.norm_2(model['theta_true']-theta_last).full().squeeze()) + ' | ' \
                                             + '{0:0.3f}'.format(ca.norm_2(model['theta_true']-theta_first).full().squeeze()) + ' | ' \
-                                            + '{0:0.3f}'.format(ca.norm_2(model['theta_true']-p_list[-1][-theta0.shape[0]:]).full().squeeze())))
+                                            + '{0:0.3f}'.format(ca.norm_2(model['theta_true']-p_list[-1][-theta0.shape[0]:]).full().squeeze()))
+            
+            print(new_string)
+            main_printout.append(new_string)
+
+            # pack results
+            results = {'constraint_violation':cst,
+                        'cost':cost,
+                        'mean_validatation_cost':mean_cost_validate,
+                        'best_cost':best_cost,
+                        'qp_failed':qp_failed,
+                        'c_k':c_k,
+                        'theta':theta_list,
+                        'p':p_list
+                    }
+
+            results_list.append(results)
+
+# give a name to export
+string_splits = all_models[most_recent_index].split('.models',1)
+export_name = string_splits[0] + '.results/' + UPDATE_ALGORITHM + '_' + string_splits[1][1:]
+
+# add printout to the stuff to export
+export = {'results':results_list,'printout':main_printout, 'hyperparameters':hyper_parameters}
+
+# export results
+with open(export_name, 'wb') as handle:
+    pickle.dump(export, handle, protocol=pickle.HIGHEST_PROTOCOL)
