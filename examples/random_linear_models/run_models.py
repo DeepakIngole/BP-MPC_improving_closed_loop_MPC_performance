@@ -17,7 +17,13 @@ from src.ingredients import Ingredients
 from utils.cleanup import cleanup
 from utils.cost_utils import quad_cost_and_bounds,bound2poly,param2terminal_cost,quad_cost_2_param,dare2param
 from src.upper_level import UpperLevel
-from utils.parameter_update import robust_gradient_descent, gradient_descent, robust_adam, adam, heavy_ball
+from utils.parameter_update import \
+    robust_gradient_descent, \
+    gradient_descent, \
+    gradient_descent_clipped, \
+    robust_adam, \
+    adam, \
+    heavy_ball
 from utils.sys_id import rls, rls_robust
 from utils.sample_utils import sample_unit_ball
 
@@ -50,25 +56,25 @@ N_MODELS = 10
 
 # horizons
 MPC_HORIZON = 5
-ITERATIONS = 500
+ITERATIONS = 100
 
 # penalties on constraint violation (closed-loop)
 L2_PENALTY = 100
 L1_PENALTY = 100
-L_PROJ = 20
+L_PROJ = 5
 
 # system identification parameters
 LAM = 1
 DELTA = 0.01
 R = 1
-S = 2
+S = 5*1.15 # max pole magnitude times 1+Ts
 
 # penalties on constraint violation (mpc)
 MPC_S_QUAD = 15
 MPC_S_LIN = 25
 
 # update algorithm (options: 'Adam', 'gd', or 'heavy_ball')
-UPDATE_ALGORITHM = 'Adam'
+UPDATE_ALGORITHM = 'gd'
 
 # set to true to run the algorithm on additional unseen noise samples
 VALIDATE = True
@@ -77,7 +83,7 @@ VALIDATE = True
 MODEL_SELECT = None
 
 # choose if certainty equivalence should be used
-CERTAINTY_EQUIVALENCE = True
+CERTAINTY_EQUIVALENCE = False
 
 ### CHOOSE ALGORITHM ----------------------------------------------------------------------------
 
@@ -97,30 +103,32 @@ elif UPDATE_ALGORITHM == 'gd':
     if CERTAINTY_EQUIVALENCE:
 
         # gd paramers (CE)
-        RHO = 1e-2
+        RHO = 2e-2
         ETA = 0.6
         LOG = True
-    
+        CLIP = 300
+
     else:
 
         # gd paramers (no CE)
-        RHO = 1e-3
-        ETA = 0.6
+        RHO = 3e-2
+        ETA = 0.51
         LOG = True
+        CLIP = 300
 
     # save in dictionary
-    hyper_parameters = {'alg':UPDATE_ALGORITHM, 'rho':RHO, 'eta':ETA, 'log':LOG}
+    hyper_parameters = {'alg':UPDATE_ALGORITHM, 'rho':RHO, 'eta':ETA, 'log':LOG, 'clip':CLIP}
 
 elif UPDATE_ALGORITHM == 'heavy_ball':
 
     if CERTAINTY_EQUIVALENCE:
 
         # heavy ball parameters (CE)
-        RHO = 0.035
+        RHO = 0.25
         ETA = 0.6
         LOG = True
-        BETA0 = 0.9
-        
+        BETA0 = 0.5
+
     else:
         
         # heavy ball parameters (no CE)
@@ -371,7 +379,8 @@ for i,model in enumerate(model_to_simulate):
 
         # create update functions
         if UPDATE_ALGORITHM == 'gd':
-            parameter_update, parameter_init = gradient_descent(rho=RHO, eta=ETA, log=LOG)
+            # parameter_update, parameter_init = gradient_descent(rho=RHO, eta=ETA, log=LOG)
+            parameter_update, parameter_init = gradient_descent_clipped(rho=RHO, eta=ETA, log=LOG, clip=CLIP)
         elif UPDATE_ALGORITHM == 'Adam':
             parameter_update, parameter_init = adam(alpha=ADAM_ALPHA, beta_1=ADAM_BETA_1, beta_2=ADAM_BETA_2,
                                                     epsilon=ADAM_EPSILON)
@@ -406,11 +415,14 @@ for i,model in enumerate(model_to_simulate):
         # projection_penalty = ca.if_else(ca.norm_2(p[-theta0.shape[0]:]-theta_cl) <= c_k_cl,0,(ca.norm_2(p[-theta0.shape[0]:]-theta_cl) - c_k_cl)**2)
         projection_penalty = (p[-theta0.shape[0]:]-theta_cl).T@(p[-theta0.shape[0]:]-theta_cl)
         cost = track_cost + L2_PENALTY*cst_viol_l2 + L1_PENALTY*cst_viol_l1 + L_PROJ*projection_penalty
+        # cost = L_PROJ*projection_penalty
+        # track_cost = ca.SX(0)
 
     # create upper-level constraints
     Hx,hx,_,_ = bound2poly(x_max,x_min,u_max,u_min,model['dim']['horizon']+1)
     _,_,Hu,hu = bound2poly(x_max,x_min,u_max,u_min,model['dim']['horizon'])
     cst_viol = ca.vcat([Hx@ca.vec(x_cl)-hx,Hu@ca.vec(u_cl)-hu])
+    # cst_viol = ca.SX(0)
 
     # create auxiliary parameters taken from sys id procedure
     psi = {'c':ca.SX.sym('c_ul',1,1),'theta':ca.SX.sym('theta_ul',*theta0.shape)}
@@ -482,6 +494,9 @@ for i,model in enumerate(model_to_simulate):
         theta_first = theta_list[0]
         p_list = [sim.p for sim in sim_list]
 
+        # get best cost
+        cost_best_simulation = ca.mmin(ca.vcat(cost))
+
         # update qp_failed flag
         qp_failed = 'Sim' if qp_failed_closed_loop else 'Never'
 
@@ -544,9 +559,9 @@ for i,model in enumerate(model_to_simulate):
                 if use_noise:
                             
                     new_string = format_str.format(i, f'{ca.sum1(ca.fmax(cst[0], 0))} | {ca.sum1(ca.fmax(cst[-1], 0))}',
-                                            f'{cost[0]} | {cost[-1]} | {cost[-1] - cost[0]}',
+                                            f'{cost[0]} | {cost_best_simulation} | {cost_best_simulation - cost[0]}',
                                             '{0:04f}'.format(mean_cost_validate),
-                                            f'{best_cost} ({best_cost - cost[-1]})',
+                                            f'{best_cost} ({best_cost - cost_best_simulation})',
                                             qp_failed,
                                             '{0:0.3f}'.format(c_k[1]) + ' | ' + '{0:0.3f}'.format(c_k[-1]),
                                             '{0:0.3f}'.format(ca.norm_2(model['theta_true']-theta_first).full().squeeze()) + ' | ' \
@@ -555,8 +570,8 @@ for i,model in enumerate(model_to_simulate):
                 else:
 
                     new_string = format_str.format(i, f'{ca.sum1(ca.fmax(cst[0], 0))} | {ca.sum1(ca.fmax(cst[-1], 0))}',
-                                            f'{cost[0]} | {cost[-1]} | {cost[-1] - cost[0]}',
-                                            '{0:0.3f} '.format(best_cost) +  f'({best_cost - cost[-1]})',
+                                            f'{cost[0]} | {cost_best_simulation} | {cost_best_simulation - cost[0]}',
+                                            '{0:0.3f} '.format(best_cost) +  f'({best_cost - cost_best_simulation})',
                                             qp_failed,
                                             '{0:0.3f}'.format(c_k[1]) + ' | ' + '{0:0.3f}'.format(c_k[-1]),
                                             '{0:0.3f}'.format(ca.norm_2(model['theta_true']-theta_first).full().squeeze()) + ' | ' \
@@ -567,9 +582,9 @@ for i,model in enumerate(model_to_simulate):
                 if use_noise:
                             
                     new_string = format_str.format(i, f'{ca.sum1(ca.fmax(cst[0], 0))} | {ca.sum1(ca.fmax(cst[-1], 0))}',
-                                            f'{cost[0]} | {cost[-1]} | {cost[-1] - cost[0]}',
+                                            f'{cost[0]} | {cost_best_simulation} | {cost_best_simulation - cost[0]}',
                                             '{0:04f}'.format(mean_cost_validate),
-                                            f'{best_cost} ({best_cost - cost[-1]})',
+                                            f'{best_cost} ({best_cost - cost_best_simulation})',
                                             qp_failed,
                                             '{0:0.3f}'.format(c_k[1]) + ' | ' + '{0:0.3f}'.format(c_k[-1]),
                                             '{0:0.3f}'.format(ca.norm_2(model['theta_true']-theta_last).full().squeeze()) + ' | ' \
@@ -579,8 +594,8 @@ for i,model in enumerate(model_to_simulate):
                 else:
 
                     new_string = format_str.format(i, f'{ca.sum1(ca.fmax(cst[0], 0))} | {ca.sum1(ca.fmax(cst[-1], 0))}',
-                                            f'{cost[0]} | {cost[-1]} | {cost[-1] - cost[0]}',
-                                            '{0:0.3f} '.format(best_cost) +  f'({best_cost - cost[-1]})',
+                                            f'{cost[0]} | {cost_best_simulation} | {cost_best_simulation - cost[0]}',
+                                            '{0:0.3f} '.format(best_cost) +  f'({best_cost - cost_best_simulation})',
                                             qp_failed,
                                             '{0:0.3f}'.format(c_k[1]) + ' | ' + '{0:0.3f}'.format(c_k[-1]),
                                             '{0:0.3f}'.format(ca.norm_2(model['theta_true']-theta_last).full().squeeze()) + ' | ' \
@@ -605,7 +620,8 @@ for i,model in enumerate(model_to_simulate):
 
 # give a name to export
 string_splits = all_models[most_recent_index].split('.models',1)
-export_name = string_splits[0] + '.results/' + UPDATE_ALGORITHM + '_' + string_splits[1][1:]
+ce_string = 'CE' if CERTAINTY_EQUIVALENCE else 'NO_CE'
+export_name = string_splits[0] + '.results/' + UPDATE_ALGORITHM + '_' + ce_string + '_' + string_splits[1][1:]
 
 # add printout to the stuff to export
 export = {'results':results_list,'printout':main_printout, 'hyperparameters':hyper_parameters}
