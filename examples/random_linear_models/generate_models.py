@@ -492,7 +492,7 @@ if __name__ == "__main__":
     # get current date and time
     formatted_date = datetime.now().strftime("%Y_%m_%d_%H_%M_%S")
 
-    # create file name containing NX, n_modelN_MODELSs and POLE_MAG and whether NOISE is present
+    # create file name containing NX, N_MODELS and POLE_MAG and whether NOISE is present
     if NOISE_MAG > 0:
         file_name = './.models/' + formatted_date + f'_random_linear_models_NX_{NX}_POLE_MAG_{POLE_RANGE[0]}_to_{POLE_RANGE[1]}_N_MODELS_{N_MODELS}_NOISE.pkl'
     else:
