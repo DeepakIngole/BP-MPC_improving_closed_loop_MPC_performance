@@ -264,7 +264,51 @@ def gradient_descent(rho:float,eta:float=1.0,log:bool=True) -> Tuple[Callable, C
         """
 
         # run GD update
-        p_next = gd_rule(p=sim.p,j_p=sim.j_p,k=k,rho=rho,eta=eta,log=log)
+        p_next = gd_rule_sat(p=sim.p,j_p=sim.j_p,k=k,rho=rho,eta=eta,log=log)
+        # p_next = gd_rule(p=sim.p,j_p=sim.j_p,k=k,rho=rho,eta=eta,log=log)
+
+        return {'p':p_next}
+    
+    return parameter_update, lambda sim: {}
+
+def gradient_descent_clipped(rho:float,eta:float=1.0,clip:float=300,log:bool=True) -> Tuple[Callable, Callable]:
+    """
+    Performs gradient descent parameter update for a simulation object.
+    Args:
+        rho (float): Regularization or step size parameter for the gradient descent update.
+        eta (float, optional): Learning rate for the gradient descent update. Defaults to 1.0.
+        clip (float): Clip the norm of the gradient.
+        log (bool, optional): If True, enables logging during the update. Defaults to True.
+    Returns:
+        tuple: 
+            - parameter_update (Callable): A function that updates the simulation parameters using gradient descent.
+            - (Callable): An auxiliary function that currently returns an empty dictionary.
+    The returned `parameter_update` function expects arguments `(sim, k)`, where:
+        sim: An object with attributes `p` (parameters) and `j_p` (gradient of the objective with respect to parameters).
+        k: The current iteration or time step.
+    The update rule is performed by the `gd_rule` function (not shown here), which applies the gradient descent step.
+    """
+
+    def parameter_update(sim:SimVar,k:int) -> dict:
+        """
+        Updates the parameter vector using a gradient descent rule.
+
+        Args:
+            sim: An object containing the current simulation state, including:
+                - p: Current parameter vector.
+                - j_p: Gradient of the cost function with respect to the parameters.
+            k (int): The current iteration or time step.
+
+        Returns:
+            dict: A dictionary containing the updated parameter vector with key 'p'.
+
+        Notes:
+            This function applies a gradient descent update rule (gd_rule) to the parameter vector.
+            Additional arguments such as rho, eta, and log are assumed to be available in the scope.
+        """
+
+        # run GD update
+        p_next = gd_rule_sat(p=sim.p,j_p=sim.j_p,k=k,rho=rho,eta=eta,log=log,clip=clip)
 
         return {'p':p_next}
     
@@ -301,11 +345,8 @@ def heavy_ball(rho,eta,beta_0,log):
         # compute stepsizes
         mu_k,v_k = get_mu_and_v(k)
 
-        # get gradient
-        j_p = sim.j_p
-
         # form update
-        p_k_p1 = p_k - mu_k * j_p + v_k * ( p_k - p_k_m1 )
+        p_k_p1 = p_k - mu_k * sim.j_p + v_k * ( p_k - p_k_m1 )
 
         # return updated parameter and store previous value
         return {'p':p_k_p1, 'psi': {'p':p_k}}
@@ -450,6 +491,31 @@ def gd_rule(p:ca.DM,j_p:ca.DM,k:int,rho:float,eta:float,log:bool) -> ca.DM:
         ca.DM: Updated parameter vector after applying the gradient descent step.
     """
     return p - (rho*ca.log(k+2)/(k+1)**eta)*j_p if log else p - (rho/(k+1)**eta)*j_p
+
+def gd_rule_sat(p:ca.DM,j_p:ca.DM,k:int,rho:float,eta:float,log:bool,clip:float) -> ca.DM:
+    """
+    Applies a gradient descent update rule to the parameter vector.
+
+    Args:
+        p (ca.DM): Current parameter vector.
+        j_p (ca.DM): Gradient of the objective function with respect to the parameters.
+        k (int): Current iteration number (zero-based).
+        rho (float): Learning rate scaling factor.
+        eta (float): Exponent controlling the learning rate decay.
+        clip (float): Clips the norm of the gradient.
+        log (bool): If True, applies a logarithmic decay to the learning rate; otherwise, uses polynomial decay.
+
+    Returns:
+        ca.DM: Updated parameter vector after applying the gradient descent step.
+    """
+
+    # compute gradient norm
+    j_p_norm = ca.norm_2(j_p)
+
+    # scale gradient
+    j_p_scaled = clip * j_p / j_p_norm if j_p_norm > clip else j_p
+
+    return p - (rho*ca.log(k+2)/(k+1)**eta)*j_p_scaled if log else p - (rho/(k+1)**eta)*j_p_scaled
 
 def adam_rule(
         p:ca.DM,
