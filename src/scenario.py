@@ -1016,7 +1016,8 @@ class Scenario:
             cost,track_cost,cst_viol = self.upper_level.cost(sim_k)
 
             # if there is no constraint violation, and the cost has improved, save current parameter as best parameter
-            if ca.sum1(cst_viol) == 0 and cost < best_cost:
+            # if ca.sum1(cst_viol) == 0 and cost < best_cost:
+            if cost < best_cost:
                 best_cost, p_best = cost, p
 
             # if in optimization mode, update parameters
