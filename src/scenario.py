@@ -26,14 +26,16 @@ class Scenario:
                                'gd_type': ['gd', 'sgd'], 'figures': bool, 'random_sampling': bool, 'debug_qp': bool,
                                'compute_qp_ingredients': bool, 'verbosity': [0, 1, 2], 'max_k': int,
                                'use_true_model': bool, 'simulate_parallel_models': bool,
-                               'compile_mapped_dynamics':bool,'true_theta':np.ndarray,'save_memory':bool}
+                               'compile_mapped_dynamics':bool,'true_theta':np.ndarray,'save_memory':bool,
+                               'cst_tol':float}
 
     _OPTIONS_DEFAULT_VALUES = {'shift_linearization': True, 'warmstart_first_qp': True, 'warmstart_shift': True,
                                'epsilon': 1e-6, 'roundoff_qp': 10, 'mode': 'optimize', 'gd_type': 'gd',
                                'figures': False, 'random_sampling': False, 'debug_qp': False,
                                'compute_qp_ingredients': False, 'verbosity': 1, 'max_k': 200,
                                'use_true_model': True, 'simulate_parallel_models': False,
-                               'compile_mapped_dynamics':False,'true_theta':np.zeros(1),'save_memory':False}
+                               'compile_mapped_dynamics':False,'true_theta':np.zeros(1),'save_memory':False,
+                               'cst_tol':1e-10}
 
     @typechecked
     def __init__(self,dyn:Dynamics,mpc:QP,upper_level:UpperLevel):
@@ -873,6 +875,7 @@ class Scenario:
                 - verbosity (int, optional, default=1): Level of printout verbosity.
                 - max_k (int, optional, default=200): Maximum number of closed-loop iterations.
                 - use_true_model (bool, optional, default=True): Whether to use the true model for simulation.
+                - cst_tol (float, optional, default = 1e-10): tolerance on when to consider constraints satisfied.
         Returns:
             SIM (list): List of simulation results for each iteration.
             comp_time (dict): Dictionary containing computation times:
@@ -1016,8 +1019,8 @@ class Scenario:
             cost,track_cost,cst_viol = self.upper_level.cost(sim_k)
 
             # if there is no constraint violation, and the cost has improved, save current parameter as best parameter
-            # if ca.sum1(cst_viol) == 0 and cost < best_cost:
-            if cost < best_cost:
+            if ca.sum1(cst_viol) <= sim_options['cst_tol'] and cost < best_cost:
+            # if cost < best_cost:
                 best_cost, p_best = cost, p
 
             # if in optimization mode, update parameters
