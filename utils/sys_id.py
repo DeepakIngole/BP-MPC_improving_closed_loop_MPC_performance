@@ -413,7 +413,7 @@ def rls(
         new_psi = {'A':a_k_1,'b':b_k_1,'theta':theta,'c':c_k}
 
         # check if pf should be updated too
-        if sim.pf is not None:
+        if (sim.pf is not None) and (idx_pf is not None):
 
             # get current pf
             pf_new = sim.pf

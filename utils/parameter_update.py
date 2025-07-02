@@ -264,8 +264,7 @@ def gradient_descent(rho:float,eta:float=1.0,log:bool=True) -> Tuple[Callable, C
         """
 
         # run GD update
-        p_next = gd_rule_sat(p=sim.p,j_p=sim.j_p,k=k,rho=rho,eta=eta,log=log)
-        # p_next = gd_rule(p=sim.p,j_p=sim.j_p,k=k,rho=rho,eta=eta,log=log)
+        p_next = gd_rule(p=sim.p,j_p=sim.j_p,k=k,rho=rho,eta=eta,log=log)
 
         return {'p':p_next}
     
