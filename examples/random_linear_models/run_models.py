@@ -83,7 +83,7 @@ VALIDATE = True
 MODEL_SELECT = None
 
 # choose if certainty equivalence should be used
-CERTAINTY_EQUIVALENCE = False
+CERTAINTY_EQUIVALENCE = True
 
 ### CHOOSE ALGORITHM ----------------------------------------------------------------------------
 
@@ -103,10 +103,10 @@ elif UPDATE_ALGORITHM == 'gd':
     if CERTAINTY_EQUIVALENCE:
 
         # gd paramers (CE)
-        RHO = 2e-2
-        ETA = 0.6
+        RHO = 1e-2
+        ETA = 0.51
         LOG = True
-        CLIP = 300
+        CLIP = 100
 
     else:
 
@@ -248,7 +248,7 @@ for i,model in enumerate(model_to_simulate):
 
     # get initializations
     x0 = model['x0']
-    theta0 = model['theta_uncertain']
+    theta0 = model['theta_true']#model['theta_uncertain']
     if use_noise:
         w0 = model['w0']
 
