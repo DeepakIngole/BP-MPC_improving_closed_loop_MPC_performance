@@ -957,7 +957,7 @@ class Scenario:
         p_best = p
 
         # check if sys_id should be performed
-        if self.upper_level.sys_id_update is not None:
+        if self.upper_level.sys_id_update is not None and sim_options['mode'] == 'optimize':
             sys_id = True
             running_vars = running_vars | self.upper_level.sys_id_init()
         else:

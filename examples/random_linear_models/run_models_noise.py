@@ -23,7 +23,8 @@ from utils.parameter_update import \
     gradient_descent_clipped, \
     robust_adam, \
     adam, \
-    heavy_ball
+    heavy_ball, \
+    minibatch_descent_clipped
 from utils.sys_id import rls, rls_robust
 from utils.sample_utils import sample_unit_ball
 
@@ -52,8 +53,8 @@ MODE = 'nominal'
 N_MODELS = 10
 
 # horizons
-MPC_HORIZON = 5
-ITERATIONS = 100
+MPC_HORIZON = 10
+ITERATIONS = 300
 
 # penalties on constraint violation (closed-loop)
 L2_PENALTY = 100
@@ -61,7 +62,7 @@ L1_PENALTY = 100
 L_PROJ = 5
 
 # system identification parameters
-LAM = 1
+LAM = 0.1
 DELTA = 0.01
 R = 1
 S = 5*1.15 # max pole magnitude times 1+Ts
@@ -74,7 +75,7 @@ MPC_S_LIN = 25
 UPDATE_ALGORITHM = 'gd'
 
 # select a single model in the list (set to None to simulate all models)
-MODEL_SELECT = [1,2]
+MODEL_SELECT = 1 # [1,2]
 
 # choose if certainty equivalence should be used
 CERTAINTY_EQUIVALENCE = True
@@ -97,10 +98,12 @@ elif UPDATE_ALGORITHM == 'gd':
     if CERTAINTY_EQUIVALENCE:
 
         # gd paramers (CE)
-        RHO = 3e-2
+        RHO = 2e-3
         ETA = 0.51
         LOG = True
-        CLIP = 150
+        CLIP = 350
+        BATCH_SIZE = 3
+        SGD = True
 
     else:
 
@@ -177,7 +180,7 @@ if MODEL_SELECT is not None and not isinstance(MODEL_SELECT,list):
 model_to_simulate = [model_list[i] for i in MODEL_SELECT] if MODEL_SELECT is not None else model_list
 
 # select verbosity
-simulation_verbosity = 0 if len(model_to_simulate) > 1 else 1
+simulation_verbosity = 0 if MODEL_SELECT is None else 1
 
 # setup printout
 columns = [ ("MODEL", 7)]
@@ -349,7 +352,8 @@ for i,model in enumerate(model_to_simulate):
         # create update functions
         if UPDATE_ALGORITHM == 'gd':
             # parameter_update, parameter_init = gradient_descent(rho=RHO, eta=ETA, log=LOG)
-            parameter_update, parameter_init = gradient_descent_clipped(rho=RHO, eta=ETA, log=LOG, clip=CLIP)
+            # parameter_update, parameter_init = gradient_descent_clipped(rho=RHO, eta=ETA, log=LOG, clip=CLIP)
+            parameter_update, parameter_init = minibatch_descent_clipped(rho=RHO, eta=ETA, log=LOG, clip=CLIP, batch_size=BATCH_SIZE)
         elif UPDATE_ALGORITHM == 'Adam':
             parameter_update, parameter_init = adam(alpha=ADAM_ALPHA, beta_1=ADAM_BETA_1, beta_2=ADAM_BETA_2,
                                                     epsilon=ADAM_EPSILON)
@@ -445,10 +449,13 @@ for i,model in enumerate(model_to_simulate):
     else:
 
         # get average training cost for untrained parameter
-        sim_list_training_untrained,_,_,qp_failed_untrained = scenario.closed_loop(options=sim_options|{'mode':'simulate','max_k': len(model['w0'])},init=init_dict.copy())
+        sim_list_training_untrained,_,_,qp_failed_untrained = scenario.closed_loop(options=sim_options|{'mode':'simulate','max_k':1},init=init_dict.copy())
 
         # test closed loop
-        sim_list,_,_,qp_failed_closed_loop = scenario.closed_loop(options=sim_options|{'random_sampling':True, 'gd_type':'sgd'},init=init_dict)
+        if SGD:
+            sim_list,_,_,qp_failed_closed_loop = scenario.closed_loop(options=sim_options|{'random_sampling':True, 'gd_type':'sgd'},init=init_dict)
+        else:
+            sim_list,_,_,qp_failed_closed_loop = scenario.closed_loop(options=sim_options,init=init_dict)
 
         # compute cost and constraint violation improvement
         cost = [sim.cost for sim in sim_list]
@@ -464,7 +471,7 @@ for i,model in enumerate(model_to_simulate):
         init_dict_training_trained['p'] = p_list[-1]
         if CERTAINTY_EQUIVALENCE:
             init_dict_training_trained['pf'] = theta_last
-        sim_list_training_trained,_,_,qp_failed_trained = scenario.closed_loop(options=sim_options|{'mode':'simulate','max_k': len(model['w0'])},init=init_dict_training_trained)
+        sim_list_training_trained,_,_,qp_failed_trained = scenario.closed_loop(options=sim_options|{'mode':'simulate','max_k':1},init=init_dict_training_trained)
 
         # get untrained and trained costs
         untrained_cost = [sim.cost for sim in sim_list_training_untrained]
@@ -490,7 +497,7 @@ for i,model in enumerate(model_to_simulate):
                 init_dict_validate['pf'] = theta_last
 
             # run in simulation mode
-            sim_list_validate,*_ = scenario.closed_loop(options=sim_options|{'mode':'simulate'},init=init_dict_validate)
+            sim_list_validate,*_ = scenario.closed_loop(options=sim_options|{'mode':'simulate','max_k':1},init=init_dict_validate)
 
             # get cost
             cost_validate = [sim.cost for sim in sim_list_validate]

@@ -34,7 +34,7 @@ MODE = 'full'
 X0_MAG = 1.5
 
 # decide whether to include noise or not
-NOISE_MAG = 0.05
+NOISE_MAG = 0.1
 NOISE_SAMPLES = 5
 
 # number of models used in robust GD
@@ -182,7 +182,7 @@ def generate_multiple(
                     receding_horizon_failed = False
 
                     # generate a new sample
-                    sample_candidate = 2*np.random.rand(model['dim']['w'],horizon)-np.ones((model['dim']['w'],horizon))
+                    sample_candidate = ( 2*np.random.rand(model['dim']['w'],horizon)-np.ones((model['dim']['w'],horizon)) ) * NOISE_MAG
 
                     # try to solve the trajectory optimization problem with this sample
                     cost_candidate,*_ = traj_solver(model['theta_true'],model['x0'],sample_candidate)

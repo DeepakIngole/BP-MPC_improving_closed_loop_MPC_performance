@@ -420,10 +420,77 @@ def minibatch_descent(rho:float,eta:float=1.0,log:bool=True,batch_size:int=1) ->
         Returns:
             dict: A dictionary with a single key 'j_p', whose value is a CasADi DM zero matrix matching the shape of sim.j_p.
         """
-        return {'j_p':ca.DM.zeros(*sim.j_p.shape)}
+        return {'j_p':ca.DM.zeros(*sim.p.shape)}
 
     return parameter_update, parameter_init
 
+def minibatch_descent_clipped(rho:float,eta:float=1.0,log:bool=True,clip:float=100,batch_size:int=1) -> Tuple[Callable, Callable]:
+    """
+    Implements a minibatch gradient descent parameter update rule.
+    Args:
+        rho (float): Learning rate or step size for the update.
+        eta (float, optional): Scaling factor for the update. Defaults to 1.0.
+        log (bool, optional): If True, enables logging during the update. Defaults to True.
+        clip (float, optional): Clip the norm of the gradient. Defaults to 100.
+        batch_size (int, optional): Number of samples in each minibatch. Defaults to 1.
+    Returns:
+        tuple: A tuple containing two functions:
+            - parameter_update(sim, k): Updates parameters using minibatch gradient descent.
+                Args:
+                    sim: Simulation or optimization state object containing current parameters and gradients.
+                    k (int): Current iteration or step index.
+                Returns:
+                    dict: Updated parameters and running gradient.
+            - parameter_init(sim): Initializes the running gradient accumulator.
+                Args:
+                    sim: Simulation or optimization state object.
+                Returns:
+                    dict: Initialized running gradient.
+    """
+
+    def parameter_update(sim:SimVar,k:int) -> dict:
+        """
+        Updates the parameters and running gradient for a simulation at each iteration.
+        This function checks if a batch update should be performed based on the current step `k` and the `batch_size`.
+        If the batch size is reached, it averages the accumulated gradients, resets the running gradient, and updates
+        the parameters using a gradient descent rule. Otherwise, it accumulates the gradient for the next batch update.
+        Args:
+            sim (SimVar): Simulation variable object containing current parameters, gradients, and running gradient.
+            k (int): Current iteration or step index.
+        Returns:
+            dict: A dictionary containing the updated parameters ('p') and the updated running gradient ('psi').
+        """
+        
+        # check if number of steps has been reached
+        if ca.fmod(k+1,batch_size) == 0:
+
+            # construct average gradient
+            j_p = (sim.psi['j_p'] + sim.j_p) / batch_size
+
+            # zero the running gradient
+            psi = {'j_p':ca.DM.zeros(*j_p.shape)}
+            
+            # run update
+            p = gd_rule_sat(p=sim.p,j_p=sim.j_p,k=k,rho=rho,eta=eta,log=log,clip=clip)
+
+        # else update gradient
+        else:
+            psi = sim.psi['j_p'] + sim.j_p
+            p = sim.p
+
+        return {'p':p,'psi':psi}
+    
+    def parameter_init(sim:SimVar) -> dict:
+        """
+        Initializes the parameter dictionary for the simulation.
+        Args:
+            sim (SimVar): An instance containing simulation variables, including the shape of 'j_p'.
+        Returns:
+            dict: A dictionary with a single key 'j_p', whose value is a CasADi DM zero matrix matching the shape of sim.j_p.
+        """
+        return {'j_p':ca.DM.zeros(*sim.p.shape)}
+
+    return parameter_update, parameter_init
 
 def average_gradient_descent(rho:float,eta:float,log:bool=True) -> Tuple[Callable, Callable]:
     """
