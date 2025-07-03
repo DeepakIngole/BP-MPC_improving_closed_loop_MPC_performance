@@ -34,11 +34,11 @@ MODE = 'full'
 X0_MAG = 1.5
 
 # decide whether to include noise or not
-NOISE_MAG = 0.0
-NOISE_SAMPLES = 0
+NOISE_MAG = 0.05
+NOISE_SAMPLES = 5
 
 # number of models used in robust GD
-N_MODELS = 100
+N_MODELS = 5
 
 # whether only feasible models should be generated
 FEASIBLE_ONLY = True
@@ -156,7 +156,7 @@ def generate_multiple(
             traj_solver = generate_trajectory_optimization_solver(model,upper_level_specs)
 
             # check if problem is feasible without noise
-            best_cost = traj_solver(model['theta_true'],ca.DM(model['dim']['w'],horizon)) if use_noise else traj_solver(model['theta_true'])
+            best_cost,x_opti,u0 = traj_solver(model['theta_true'],model['x0'],ca.DM(model['dim']['w'],horizon)) if use_noise else traj_solver(model['theta_true'],model['x0'])
 
             # if cost is infinite, continue to the next model
             if best_cost == ca.inf:
@@ -167,6 +167,7 @@ def generate_multiple(
 
                 # initialize list containing costs
                 cost_list = []
+                cost_list_omni = [] # this one contains the cost if the noise was known in advance
 
                 # initialize list of noise samples
                 w_list = []
@@ -177,32 +178,70 @@ def generate_multiple(
                 # generate noise samples until we have generated both training and testing samples
                 while done_samples < 2*noise_samples:
 
+                    # flag representing failure of receding horizon problem
+                    receding_horizon_failed = False
+
                     # generate a new sample
                     sample_candidate = 2*np.random.rand(model['dim']['w'],horizon)-np.ones((model['dim']['w'],horizon))
 
                     # try to solve the trajectory optimization problem with this sample
-                    cost_candidate = traj_solver(model['theta_true'],sample_candidate)
+                    cost_candidate,*_ = traj_solver(model['theta_true'],model['x0'],sample_candidate)
                     
                     # if cost is infinite, continue to the next model
                     if cost_candidate == ca.inf:
+                        # print('Full problem infeasible')
                         continue
 
-                    # if it succeeds, append to the list of costs and samples
-                    cost_list.append(cost_candidate)
+                    # if it succeeds, run in feedback to obtain best feedback cost
+                    X = [model['x0']]
+                    U = []
+                    x_opti_t = None
+
+                    for w_t in np.hsplit(sample_candidate,sample_candidate.shape[1]):
+                        
+                        # solve optimization problem
+                        cost_t,x_opti_t,u_t = traj_solver(model['theta_true'],X[-1],0*sample_candidate,x_opti_t)
+
+                        # check if problem was feasible
+                        if cost_t == ca.inf:
+                            # print('Receding horizon problem failed')
+                            receding_horizon_failed = True
+                            continue
+
+                        # store input
+                        U.append(u_t)
+                            
+                        # otherwise, propagate dynamics
+                        X.append(model['f'](X[-1],u_t,w_t))
+
+                    # skip if receding horizon failed
+                    if receding_horizon_failed:
+                        continue
+
+                    # compute cost
+                    cost_candidate_feedback = ca.vcat(X).T@ca.kron(ca.DM.eye(model['dim']['horizon']+1),upper_level_specs['Q'])@ca.vcat(X) \
+                                                + ca.vcat(U).T@ca.kron(ca.DM.eye(model['dim']['horizon']),upper_level_specs['R'])@ca.vcat(U)
+
+                    # append cost and move on
+                    cost_list.append(cost_candidate_feedback)
+                    cost_list_omni.append(cost_candidate)
                     w_list.append(ca.horzsplit(sample_candidate))
                     done_samples += 1
+                    print(f'Model: {i}, done samples: {done_samples}')
                 
                 # divide into training and testing samples
                 model['w0'] = w_list[:noise_samples]
                 model['w0_testing'] = w_list[noise_samples:]
                 model['best_cost'] = cost_list[:noise_samples]
+                model['best_cost_omni'] = cost_list_omni[:noise_samples]
                 model['best_cost_testing'] = cost_list[noise_samples:]
+                model['best_cost_testing_omni'] = cost_list_omni[noise_samples:]
                 model['cost_spec'] = upper_level_specs
             
             # no noise is used, but we still need to solve the trajectory optimization problem
             else:
                 # solve the trajectory optimization problem
-                best_cost = traj_solver(model['theta_true'])
+                best_cost = traj_solver(model['theta_true'],model['x0'])
 
                 # if cost is infinite, continue to the next model
                 if best_cost == ca.inf:
@@ -302,10 +341,8 @@ def generate_single(
     if mode == 'poles':
 
         # create new system with uncertainty by sampling new poles within the specified uncertainty range
-        poles_uncertainty_unit = 2*np.random.rand(n_x)
-        poles_uncertainty = np.ones(n_x) + uncertainty/np.linalg.norm(poles_uncertainty_unit) * poles_uncertainty_unit
-        # poles_uncertainty = uncertainty * poles_uncertainty_unit
-        poles_uncertain = np.multiply(poles_uncertainty_unit,true_poles)
+        poles_uncertainty = np.ones(n_x) + 2*uncertainty*np.random.rand(n_x)
+        poles_uncertain = np.multiply(poles_uncertainty,true_poles)
 
         # apply to matrices
         A_uncertain,B_uncertain,_ = poles_to_linear_sys(poles=poles_uncertain,sampling_time=sampling_time)
@@ -313,8 +350,8 @@ def generate_single(
     elif mode == 'full':
         
         # form uncertainty
-        mat_A_uncertainty = np.ones((n_x,n_x))+2*uncertainty*np.random.rand(n_x,n_x)
-        mat_B_uncertainty = np.ones((n_x,1))+2*uncertainty*np.random.rand(n_x,1)
+        mat_A_uncertainty = np.ones((n_x,n_x)) + 2*uncertainty*np.random.rand(n_x,n_x)
+        mat_B_uncertainty = np.ones((n_x,1)) + 2*uncertainty*np.random.rand(n_x,1)
 
         # apply to matrices
         A_uncertain = ca.times(mats['A'],mat_A_uncertainty)
@@ -381,7 +418,8 @@ def generate_trajectory_optimization_solver(model:dict,upper_level_specs:dict) -
     Returns:
         ca.Function: CasADi function representing the trajectory optimization solver. The function
             takes as input the model parameters (theta, and optionally disturbance sequence w) and
-            returns the optimal cost.
+            returns the optimal cost, the vector of optimization variables, and the first optimal
+            input.
     """
 
     # get upper level cost
@@ -395,20 +433,21 @@ def generate_trajectory_optimization_solver(model:dict,upper_level_specs:dict) -
     u_min = upper_level_specs['u_min']
 
     # get opti stack
-    # opti = ca.Opti('conic')
-    opti = ca.Opti()
+    opti = ca.Opti('conic')
+    # opti = ca.Opti()
 
     # create optimization variables
     x = opti.variable(model['dim']['x'],model['dim']['horizon']+1)
     u = opti.variable(model['dim']['u'],model['dim']['horizon'])
 
     # create parameters
+    x0 = opti.parameter(model['dim']['x'],1)
     if model['dim']['w'] > 0:
         w = opti.parameter(model['dim']['w'],model['dim']['horizon'])
     theta = opti.parameter(model['dim']['theta'],1)
 
     # enforce initial condition
-    opti.subject_to( x[:,0] == model['x0'] )
+    opti.subject_to( x[:,0] == x0 )
 
     # loop for constraints and dynamics
     for t in range(0,model['dim']['horizon']):
@@ -435,35 +474,72 @@ def generate_trajectory_optimization_solver(model:dict,upper_level_specs:dict) -
     opti.minimize(cost)
 
     # solver
-    opts = dict()
-    opts["print_time"] = False
-    # opts['osqp'] = {"sb":'yes'}
+    opts = {'print_time':False}
+
+    # option 1: qpOASES
+    # opts['printLevel'] = 'none'
+    # opti.solver('qpoases',opts)
+
+    # option 2: osqp
+    # opts['osqp'] = {"verbose":False}
     # opti.solver('osqp',opts)
-    opts['ipopt'] = {"sb":'yes','print_level':0}
-    opti.solver('ipopt',opts)
+    
+    import sys, os, contextlib
+
+    @contextlib.contextmanager
+    def suppress_output():
+        with open(os.devnull, 'w') as fnull:
+            old_stdout = sys.stdout
+            old_stderr = sys.stderr
+            sys.stdout = fnull
+            sys.stderr = fnull
+            try:
+                yield
+            finally:
+                sys.stdout = old_stdout
+                sys.stderr = old_stderr
+
+    # option 3: ipopt
+    # opts['ipopt'] = {"sb":'yes','print_level':0}
+    # opti.solver('ipopt',opts)
+
+    opti.solver('daqp')
 
     # turn into function
     if model['dim']['w'] > 0:
         # solver = opti.to_function("f",[theta,w],[cost])
-        def solver(theta_val,w_val):
+        def solver(theta_val,x0_val,w_val,x_opti_init=None):
             opti.set_value(theta,theta_val)
             opti.set_value(w,w_val)
-            try:
-                opti.solve()
-                best_cost = opti.value(cost)
-            except:
-                best_cost = ca.inf
-            return best_cost
+            opti.set_value(x0,x0_val)
+            if x_opti_init is not None:
+                opti.set_initial(opti.x,x_opti_init)
+            with suppress_output():
+                try:
+                    sol = opti.solve()
+                    best_cost = sol.value(cost)
+                    x_out = sol.value(opti.x)
+                    u_out = sol.value(u[:,0])
+                except:
+                    best_cost = ca.inf
+                    x_out = None
+                    u_out = None
+            return best_cost,x_out,u_out
     else:
         # solver = opti.to_function("f",[theta],[cost])
-        def solver(theta_val):
+        def solver(theta_val,x0_val):
             opti.set_value(theta,theta_val)
+            opti.set_value(x0,x0_val)
             try:
-                opti.solve()
-                best_cost = opti.value(cost)
+                sol = opti.solve()
+                best_cost = sol.value(cost)
+                x_out = sol.value(opti.x)
+                u_out = sol.value(u[:,0])
             except:
                 best_cost = ca.inf
-            return best_cost
+                x_out = None
+                u_out = None
+            return best_cost,x_out,u_out
 
     return solver
 
