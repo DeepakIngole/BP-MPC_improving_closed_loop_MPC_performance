@@ -32,6 +32,10 @@ cleanup()
 
 #### SETUP ---------------------------------------------------------------------------------------
 
+# printout
+PRINT_CST_VIOL = False
+PRINT_CK = False
+
 # decide what to compile
 COMPILE_DYNAMICS = False
 COMPILE_QP_SPARSE = False
@@ -49,7 +53,7 @@ N_MODELS = 10
 
 # horizons
 MPC_HORIZON = 5
-ITERATIONS = 200
+ITERATIONS = 500
 
 # penalties on constraint violation (closed-loop)
 L2_PENALTY = 100
@@ -93,10 +97,10 @@ elif UPDATE_ALGORITHM == 'gd':
     if CERTAINTY_EQUIVALENCE:
 
         # gd paramers (CE)
-        RHO = 5e-3
-        ETA = 0.6
+        RHO = 3e-2
+        ETA = 0.51
         LOG = True
-        CLIP = 100
+        CLIP = 150
 
     else:
 
@@ -175,15 +179,17 @@ simulation_verbosity = 0 if len(model_to_simulate) > 1 else 1
 if MODEL_SELECT is None:
 
     # setup printout
-    columns = [ ("MODEL", 10),
-                ("Constraint violation (first-last)", 33),
-                ("Cost (first-last-increment)", 40),
-                ("Cost on holdout set", 20),
-                ("Best achievable cost (feedback)", 35),
-                ("Best achievable cost (omniscient)", 35),
-                ("QP failed", 10),
-                ("Uncertainty radius", 18),
-                ('Error on identified theta', 25)]
+    columns = [ ("MODEL", 7)]
+    if PRINT_CST_VIOL:
+        columns.extend([("Cst training", 25), ("Cst testing", 25)])
+    columns.extend([("Training Cost (Untrained-Trained-Difference)", 44),
+                    ("Training Best (Feedback-Omniscient)", 49),
+                    ("Testing Cost (Trained-Difference)", 33),
+                    ("Testing Best (Feedback-Omniscient)", 49),
+                    ('Error on identified theta', 25)])
+    if PRINT_CK:
+        columns.append(("Uncertainty radius", 18))
+    columns.append(("QP failed", 10))
 
     # Create a format string based on column widths
     format_str = " | ".join(f"{{:^{width}}}" for _, width in columns)
@@ -437,15 +443,11 @@ for i,model in enumerate(model_to_simulate):
     # if not, run the closed-loop optimization
     else:
 
-        # if noise is used, sample the noise randomly in each iteration
-        sim_options['random_sampling'] = True
-        sim_options['gd_type'] = 'sgd'
-
         # get average training cost for untrained parameter
-        sim_list_training_untrained,_,_,qp_failed_untrained = scenario.closed_loop(options=sim_options|{'mode':'simulate'},init=init_dict.copy())
+        sim_list_training_untrained,_,_,qp_failed_untrained = scenario.closed_loop(options=sim_options|{'mode':'simulate','max_k': len(model['w0'])},init=init_dict.copy())
 
         # test closed loop
-        sim_list,_,p_best,qp_failed_closed_loop = scenario.closed_loop(options=sim_options,init=init_dict)
+        sim_list,_,_,qp_failed_closed_loop = scenario.closed_loop(options=sim_options|{'random_sampling':True, 'gd_type':'sgd'},init=init_dict)
 
         # compute cost and constraint violation improvement
         cost = [sim.cost for sim in sim_list]
@@ -461,7 +463,7 @@ for i,model in enumerate(model_to_simulate):
         init_dict_training_trained['p'] = p_list[-1]
         if CERTAINTY_EQUIVALENCE:
             init_dict_training_trained['pf'] = theta_last
-        sim_list_training_trained,_,_,qp_failed_trained = scenario.closed_loop(options=sim_options|{'mode':'simulate'},init=init_dict_training_trained)
+        sim_list_training_trained,_,_,qp_failed_trained = scenario.closed_loop(options=sim_options|{'mode':'simulate','max_k': len(model['w0'])},init=init_dict_training_trained)
 
         # get untrained and trained costs
         untrained_cost = [sim.cost for sim in sim_list_training_untrained]
@@ -495,55 +497,67 @@ for i,model in enumerate(model_to_simulate):
 
             # compute mean cost
             mean_cost_validate = np.mean(np.array(cost_validate))
+            max_cst_validate = np.max(np.sum(np.maximum(np.hstack(cst_validate),0),axis=0))
 
         else:
 
             mean_cost_validate = np.inf
+            max_trained_cst = np.inf
 
         # use the best cost from the model
-        best_cost = np.mean(np.array(model['best_cost_testing']))
-        best_cost_omni = np.mean(np.array(model['best_cost_testing_omni']))
+        best_cost_testing = np.mean(np.array(model['best_cost_testing']))
+        best_cost_omni_testing = np.mean(np.array(model['best_cost_testing_omni']))
+        best_cost_training = np.mean(np.array(model['best_cost']))
+        best_cost_omni_training = np.mean(np.array(model['best_cost_omni']))
                                 
         # add to table
         if len(model_to_simulate) > 1:
 
-            # printout
+            # setup printout strings
+            cst_viol_string_training = '{0:0.4f}'.format(max_untrained_cst) + ' | ' + '{0:0.4f}'.format(max_trained_cst)
+            cst_viol_string_testing = '{0:0.4f}'.format(max_cst_validate)
+            training_cost_string =  '{0:0.4f}'.format(mean_untrained_cost) + ' | ' + \
+                                    '{0:0.4f}'.format(mean_trained_cost) + ' | ' + \
+                                    '{0:0.4f}'.format(mean_trained_cost - mean_untrained_cost)
+            best_training_cost_string = '{0:0.4f}'.format(best_cost_training) + ' (' + \
+                                        '{0:0.4f}'.format(best_cost_training-mean_trained_cost) + ') | ' + \
+                                        '{0:0.4f}'.format(best_cost_omni_training) + ' (' + \
+                                        '{0:0.4f}'.format(best_cost_omni_training-mean_trained_cost) + ') '
+            testing_cost_string = '{0:0.4f}'.format(mean_cost_validate)
+            best_testing_cost_string =  '{0:0.4f}'.format(best_cost_testing) + ' (' + \
+                                        '{0:0.4f}'.format(best_cost_testing-mean_cost_validate) + ') | ' + \
+                                        '{0:0.4f}'.format(best_cost_omni_testing) + ' (' + \
+                                        '{0:0.4f}'.format(best_cost_omni_testing-mean_cost_validate) + ') '
+            c_k_string = '{0:0.3f}'.format(c_k[1]) + ' | ' + '{0:0.3f}'.format(c_k[-1])
+
             if CERTAINTY_EQUIVALENCE:
-
-                new_string = format_str.format(i, '{0:0.4f}'.format(max_untrained_cst) + ' | ' + '{0:0.4f}'.format(max_trained_cst),
-                                        '{0:0.4f}'.format(mean_untrained_cost) + ' | ' + '{0:0.4f}'.format(mean_trained_cost) + ' | ' '{0:0.4f}'.format(mean_trained_cost - mean_untrained_cost),
-                                        '{0:0.4f}'.format(mean_cost_validate),
-                                        '{0:0.4f}'.format(np.array(best_cost)) + '(' + '{0:0.4f}'.format(float(best_cost - mean_cost_validate)) + ')',
-                                        '{0:0.4f}'.format(np.array(best_cost_omni)) + '(' + '{0:0.4f}'.format(float(best_cost_omni - mean_cost_validate)) + ')',
-                                        qp_failed,
-                                        '{0:0.3f}'.format(c_k[1]) + ' | ' + '{0:0.3f}'.format(c_k[-1]),
-                                        '{0:0.3f}'.format(ca.norm_2(model['theta_true']-theta_first).full().squeeze()) + ' | ' \
-                                        + '{0:0.3f}'.format(ca.norm_2(model['theta_true']-theta_last).full().squeeze()))
-            
+                theta_error_string =    '{0:0.3f}'.format(ca.norm_2(model['theta_true']-theta_first).full().squeeze()) + ' | ' + \
+                                        '{0:0.3f}'.format(ca.norm_2(model['theta_true']-theta_last).full().squeeze())
             else:
-
-                new_string = format_str.format(i, '{0:0.4f}'.format(max_untrained_cst) + ' | ' + '{0:0.4f}'.format(max_trained_cst),
-                                        '{0:0.4f}'.format(mean_untrained_cost) + ' | ' + '{0:0.4f}'.format(mean_trained_cost) + ' | ' '{0:0.4f}'.format(mean_trained_cost - mean_untrained_cost),
-                                        '{0:0.4f}'.format(mean_cost_validate),
-                                        '{0:0.4f}'.format(best_cost) + '(' + '{0:0.4f}'.format(float(best_cost - mean_cost_validate)) + ')',
-                                        '{0:0.4f}'.format(np.array(best_cost_omni)) + '(' + '{0:0.4f}'.format(float(best_cost_omni - mean_cost_validate)) + ')',
-                                        qp_failed,
-                                        '{0:0.3f}'.format(c_k[1]) + ' | ' + '{0:0.3f}'.format(c_k[-1]),
-                                        '{0:0.3f}'.format(ca.norm_2(model['theta_true']-theta_last).full().squeeze()) + ' | ' \
+                theta_error_string =    '{0:0.3f}'.format(ca.norm_2(model['theta_true']-theta_last).full().squeeze()) + ' | ' \
                                         + '{0:0.3f}'.format(ca.norm_2(model['theta_true']-theta_first).full().squeeze()) + ' | ' \
-                                        + '{0:0.3f}'.format(ca.norm_2(model['theta_true']-p_list[-1][-theta0.shape[0]:]).full().squeeze()))
+                                        + '{0:0.3f}'.format(ca.norm_2(model['theta_true']-p_list[-1][-theta0.shape[0]:]).full().squeeze())
+
+            # combine
+            to_print = [i]
+            if PRINT_CST_VIOL:
+                to_print.extend([cst_viol_string_training,cst_viol_string_testing])
+            to_print.extend([training_cost_string,best_training_cost_string,testing_cost_string,best_testing_cost_string,theta_error_string])
+            if PRINT_CK:
+                to_print.append(c_k_string)
+            to_print.append(qp_failed)
+
+            # generate printout
+            new_string = format_str.format(*to_print)
             
             print(new_string)
             main_printout.append(new_string)
 
             # pack results
-            results = {'constraint_violation':cst,
+            results = {'constraint_violation_training':[max_untrained_cst,max_trained_cst,max_cst_validate],
                         'cost':cost,
-                        'mean_validatation_cost':mean_cost_validate,
-                        'mean_trained_cost':mean_trained_cost,
-                        'mean_untrained_cost':mean_untrained_cost,
-                        'best_cost':best_cost,
-                        'best_cost_omni':best_cost_omni,
+                        'validation_cost':{'alg':mean_cost_validate,'best_feedback':best_cost_testing,'best_omni':best_cost_omni_testing},
+                        'training_cost':{'alg_trained':mean_trained_cost,'alg_untrained':mean_untrained_cost,'best_feedback':best_cost_training,'best_omni':best_cost_omni_training},
                         'qp_failed':qp_failed,
                         'c_k':c_k,
                         'theta':theta_list,
