@@ -53,7 +53,7 @@ N_MODELS = 10
 
 # horizons
 MPC_HORIZON = 5
-ITERATIONS = 500
+ITERATIONS = 100
 
 # penalties on constraint violation (closed-loop)
 L2_PENALTY = 100
@@ -74,7 +74,7 @@ MPC_S_LIN = 25
 UPDATE_ALGORITHM = 'gd'
 
 # select a single model in the list (set to None to simulate all models)
-MODEL_SELECT = None
+MODEL_SELECT = [1,2]
 
 # choose if certainty equivalence should be used
 CERTAINTY_EQUIVALENCE = True
@@ -170,41 +170,42 @@ use_noise = model_list[0]['dim']['w'] > 0
 if not use_noise:
     raise Exception('This script should run with noise.')
 
+if MODEL_SELECT is not None and not isinstance(MODEL_SELECT,list):
+    MODEL_SELECT = [MODEL_SELECT]
+
 # choose models to simulate
-model_to_simulate = [model_list[MODEL_SELECT]] if MODEL_SELECT is not None else model_list
+model_to_simulate = [model_list[i] for i in MODEL_SELECT] if MODEL_SELECT is not None else model_list
 
 # select verbosity
 simulation_verbosity = 0 if len(model_to_simulate) > 1 else 1
 
-if MODEL_SELECT is None:
+# setup printout
+columns = [ ("MODEL", 7)]
+if PRINT_CST_VIOL:
+    columns.extend([("Cst training", 25), ("Cst testing", 25)])
+columns.extend([("Training Cost (Untrained-Trained-Difference)", 44),
+                ("Training Best (Feedback-Omniscient)", 49),
+                ("Testing Cost (Trained-Difference)", 33),
+                ("Testing Best (Feedback-Omniscient)", 49),
+                ('Error on identified theta', 25)])
+if PRINT_CK:
+    columns.append(("Uncertainty radius", 18))
+columns.append(("QP failed", 10))
 
-    # setup printout
-    columns = [ ("MODEL", 7)]
-    if PRINT_CST_VIOL:
-        columns.extend([("Cst training", 25), ("Cst testing", 25)])
-    columns.extend([("Training Cost (Untrained-Trained-Difference)", 44),
-                    ("Training Best (Feedback-Omniscient)", 49),
-                    ("Testing Cost (Trained-Difference)", 33),
-                    ("Testing Best (Feedback-Omniscient)", 49),
-                    ('Error on identified theta', 25)])
-    if PRINT_CK:
-        columns.append(("Uncertainty radius", 18))
-    columns.append(("QP failed", 10))
+# Create a format string based on column widths
+format_str = " | ".join(f"{{:^{width}}}" for _, width in columns)
 
-    # Create a format string based on column widths
-    format_str = " | ".join(f"{{:^{width}}}" for _, width in columns)
+# Print header
+header = format_str.format(*(name for name, _ in columns))
+separator = "-+-".join("-" * width for _, width in columns)
+print(header)
+print(separator)
 
-    # Print header
-    header = format_str.format(*(name for name, _ in columns))
-    separator = "-+-".join("-" * width for _, width in columns)
-    print(header)
-    print(separator)
+# store string
+main_printout = [header,separator]
 
-    # store string
-    main_printout = [header,separator]
-
-    # store results
-    results_list = []
+# store results
+results_list = []
 
 # loop through all models
 for i,model in enumerate(model_to_simulate):
@@ -510,62 +511,59 @@ for i,model in enumerate(model_to_simulate):
         best_cost_training = np.mean(np.array(model['best_cost']))
         best_cost_omni_training = np.mean(np.array(model['best_cost_omni']))
                                 
-        # add to table
-        if len(model_to_simulate) > 1:
+        # setup printout strings
+        cst_viol_string_training = '{0:0.4f}'.format(max_untrained_cst) + ' | ' + '{0:0.4f}'.format(max_trained_cst)
+        cst_viol_string_testing = '{0:0.4f}'.format(max_cst_validate)
+        training_cost_string =  '{0:0.4f}'.format(mean_untrained_cost) + ' | ' + \
+                                '{0:0.4f}'.format(mean_trained_cost) + ' | ' + \
+                                '{0:0.4f}'.format(mean_trained_cost - mean_untrained_cost)
+        best_training_cost_string = '{0:0.4f}'.format(best_cost_training) + ' (' + \
+                                    '{0:0.4f}'.format(best_cost_training-mean_trained_cost) + ') | ' + \
+                                    '{0:0.4f}'.format(best_cost_omni_training) + ' (' + \
+                                    '{0:0.4f}'.format(best_cost_omni_training-mean_trained_cost) + ') '
+        testing_cost_string = '{0:0.4f}'.format(mean_cost_validate)
+        best_testing_cost_string =  '{0:0.4f}'.format(best_cost_testing) + ' (' + \
+                                    '{0:0.4f}'.format(best_cost_testing-mean_cost_validate) + ') | ' + \
+                                    '{0:0.4f}'.format(best_cost_omni_testing) + ' (' + \
+                                    '{0:0.4f}'.format(best_cost_omni_testing-mean_cost_validate) + ') '
+        c_k_string = '{0:0.3f}'.format(c_k[1]) + ' | ' + '{0:0.3f}'.format(c_k[-1])
 
-            # setup printout strings
-            cst_viol_string_training = '{0:0.4f}'.format(max_untrained_cst) + ' | ' + '{0:0.4f}'.format(max_trained_cst)
-            cst_viol_string_testing = '{0:0.4f}'.format(max_cst_validate)
-            training_cost_string =  '{0:0.4f}'.format(mean_untrained_cost) + ' | ' + \
-                                    '{0:0.4f}'.format(mean_trained_cost) + ' | ' + \
-                                    '{0:0.4f}'.format(mean_trained_cost - mean_untrained_cost)
-            best_training_cost_string = '{0:0.4f}'.format(best_cost_training) + ' (' + \
-                                        '{0:0.4f}'.format(best_cost_training-mean_trained_cost) + ') | ' + \
-                                        '{0:0.4f}'.format(best_cost_omni_training) + ' (' + \
-                                        '{0:0.4f}'.format(best_cost_omni_training-mean_trained_cost) + ') '
-            testing_cost_string = '{0:0.4f}'.format(mean_cost_validate)
-            best_testing_cost_string =  '{0:0.4f}'.format(best_cost_testing) + ' (' + \
-                                        '{0:0.4f}'.format(best_cost_testing-mean_cost_validate) + ') | ' + \
-                                        '{0:0.4f}'.format(best_cost_omni_testing) + ' (' + \
-                                        '{0:0.4f}'.format(best_cost_omni_testing-mean_cost_validate) + ') '
-            c_k_string = '{0:0.3f}'.format(c_k[1]) + ' | ' + '{0:0.3f}'.format(c_k[-1])
+        if CERTAINTY_EQUIVALENCE:
+            theta_error_string =    '{0:0.3f}'.format(ca.norm_2(model['theta_true']-theta_first).full().squeeze()) + ' | ' + \
+                                    '{0:0.3f}'.format(ca.norm_2(model['theta_true']-theta_last).full().squeeze())
+        else:
+            theta_error_string =    '{0:0.3f}'.format(ca.norm_2(model['theta_true']-theta_last).full().squeeze()) + ' | ' \
+                                    + '{0:0.3f}'.format(ca.norm_2(model['theta_true']-theta_first).full().squeeze()) + ' | ' \
+                                    + '{0:0.3f}'.format(ca.norm_2(model['theta_true']-p_list[-1][-theta0.shape[0]:]).full().squeeze())
 
-            if CERTAINTY_EQUIVALENCE:
-                theta_error_string =    '{0:0.3f}'.format(ca.norm_2(model['theta_true']-theta_first).full().squeeze()) + ' | ' + \
-                                        '{0:0.3f}'.format(ca.norm_2(model['theta_true']-theta_last).full().squeeze())
-            else:
-                theta_error_string =    '{0:0.3f}'.format(ca.norm_2(model['theta_true']-theta_last).full().squeeze()) + ' | ' \
-                                        + '{0:0.3f}'.format(ca.norm_2(model['theta_true']-theta_first).full().squeeze()) + ' | ' \
-                                        + '{0:0.3f}'.format(ca.norm_2(model['theta_true']-p_list[-1][-theta0.shape[0]:]).full().squeeze())
+        # combine
+        to_print = [MODEL_SELECT[i]] if MODEL_SELECT is not None else [i]
+        if PRINT_CST_VIOL:
+            to_print.extend([cst_viol_string_training,cst_viol_string_testing])
+        to_print.extend([training_cost_string,best_training_cost_string,testing_cost_string,best_testing_cost_string,theta_error_string])
+        if PRINT_CK:
+            to_print.append(c_k_string)
+        to_print.append(qp_failed)
 
-            # combine
-            to_print = [i]
-            if PRINT_CST_VIOL:
-                to_print.extend([cst_viol_string_training,cst_viol_string_testing])
-            to_print.extend([training_cost_string,best_training_cost_string,testing_cost_string,best_testing_cost_string,theta_error_string])
-            if PRINT_CK:
-                to_print.append(c_k_string)
-            to_print.append(qp_failed)
+        # generate printout
+        new_string = format_str.format(*to_print)
+        
+        print(new_string)
+        main_printout.append(new_string)
 
-            # generate printout
-            new_string = format_str.format(*to_print)
-            
-            print(new_string)
-            main_printout.append(new_string)
+        # pack results
+        results = {'constraint_violation_training':[max_untrained_cst,max_trained_cst,max_cst_validate],
+                    'cost':cost,
+                    'validation_cost':{'alg':mean_cost_validate,'best_feedback':best_cost_testing,'best_omni':best_cost_omni_testing},
+                    'training_cost':{'alg_trained':mean_trained_cost,'alg_untrained':mean_untrained_cost,'best_feedback':best_cost_training,'best_omni':best_cost_omni_training},
+                    'qp_failed':qp_failed,
+                    'c_k':c_k,
+                    'theta':theta_list,
+                    'theta_true':model['theta_true'],
+                    'p':p_list
+                }
 
-            # pack results
-            results = {'constraint_violation_training':[max_untrained_cst,max_trained_cst,max_cst_validate],
-                        'cost':cost,
-                        'validation_cost':{'alg':mean_cost_validate,'best_feedback':best_cost_testing,'best_omni':best_cost_omni_testing},
-                        'training_cost':{'alg_trained':mean_trained_cost,'alg_untrained':mean_untrained_cost,'best_feedback':best_cost_training,'best_omni':best_cost_omni_training},
-                        'qp_failed':qp_failed,
-                        'c_k':c_k,
-                        'theta':theta_list,
-                        'theta_true':model['theta_true'],
-                        'p':p_list
-                    }
-
-            results_list.append(results)
+        results_list.append(results)
 
 # give a name to export
 string_splits = all_models[most_recent_index].split('.models',1)
