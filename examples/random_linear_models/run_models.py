@@ -522,8 +522,6 @@ for i,model in enumerate(model_to_simulate):
 
             mean_cost_validate = np.inf
 
-        # TODO: I need to implement a receding horizon "optimal" controller for when there is noise
-
         if USE_CUSTOM_COST_SPEC or 'best_cost' not in model:
 
             # update cost in upper level
