@@ -1061,7 +1061,7 @@ class Scenario:
                     if sys_id and self.options['true_theta'] is not np.zeros(1):
 
                         # compute estimation error
-                        est_error = np.mean(np.linalg.norm(running_vars['theta']-self.options['true_theta'],axis=1))
+                        est_error = np.mean(np.linalg.norm(sim_k.psi['theta']-sim_options['true_theta'],axis=1))
 
                         to_print += f', Current estimation error: {est_error}'
                     

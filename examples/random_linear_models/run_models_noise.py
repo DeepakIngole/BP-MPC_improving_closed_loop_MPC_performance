@@ -240,7 +240,7 @@ for i,model in enumerate(model_to_simulate):
 
     # get initializations
     x0 = model['x0']
-    theta0 = model['theta_true']#model['theta_uncertain']
+    theta0 = model['theta_uncertain']
     w0 = model['w0']
 
     # extract upper level cost
