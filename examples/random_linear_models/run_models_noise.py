@@ -53,8 +53,8 @@ MODE = 'nominal'
 N_MODELS = 10
 
 # horizons
-MPC_HORIZON = 10
-ITERATIONS = 300
+MPC_HORIZON = 5
+ITERATIONS = 500
 
 # penalties on constraint violation (closed-loop)
 L2_PENALTY = 100
@@ -75,7 +75,7 @@ MPC_S_LIN = 25
 UPDATE_ALGORITHM = 'gd'
 
 # select a single model in the list (set to None to simulate all models)
-MODEL_SELECT = 1 # [1,2]
+MODEL_SELECT = 2 # [1,2]
 
 # choose if certainty equivalence should be used
 CERTAINTY_EQUIVALENCE = True
@@ -98,11 +98,11 @@ elif UPDATE_ALGORITHM == 'gd':
     if CERTAINTY_EQUIVALENCE:
 
         # gd paramers (CE)
-        RHO = 2e-3
+        RHO = 2.5e-1
         ETA = 0.51
         LOG = True
-        CLIP = 350
-        BATCH_SIZE = 3
+        CLIP = 150
+        BATCH_SIZE = 5
         SGD = True
 
     else:
@@ -581,5 +581,6 @@ export_name = string_splits[0] + '.results/' + UPDATE_ALGORITHM + '_' + ce_strin
 export = {'results':results_list,'printout':main_printout, 'hyperparameters':hyper_parameters}
 
 # export results
-with open(export_name, 'wb') as handle:
-    pickle.dump(export, handle, protocol=pickle.HIGHEST_PROTOCOL)
+if MODEL_SELECT is None:
+    with open(export_name, 'wb') as handle:
+        pickle.dump(export, handle, protocol=pickle.HIGHEST_PROTOCOL)

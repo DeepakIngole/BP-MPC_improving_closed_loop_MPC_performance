@@ -34,11 +34,11 @@ MODE = 'full'
 X0_MAG = 1.5
 
 # decide whether to include noise or not
-NOISE_MAG = 0.1
-NOISE_SAMPLES = 5
+NOISE_MAG = 0.0
+NOISE_SAMPLES = 0
 
 # number of models used in robust GD
-N_MODELS = 5
+N_MODELS = 50
 
 # whether only feasible models should be generated
 FEASIBLE_ONLY = True
@@ -150,127 +150,141 @@ def generate_multiple(
                     mode=mode
                 )
         
-        if feasible_only:
+        try:
 
-            # generate trajectory optimization solver if requested
-            traj_solver = generate_trajectory_optimization_solver(model,upper_level_specs)
+            if feasible_only:
 
-            # check if problem is feasible without noise
-            best_cost,x_opti,u0 = traj_solver(model['theta_true'],model['x0'],ca.DM(model['dim']['w'],horizon)) if use_noise else traj_solver(model['theta_true'],model['x0'])
+                consecutive_failures = 0
 
-            # if cost is infinite, continue to the next model
-            if best_cost == ca.inf:
-                continue
+                # generate trajectory optimization solver if requested
+                traj_solver = generate_trajectory_optimization_solver(model,upper_level_specs)
 
-            # generate random noise if requested
-            if use_noise:
-
-                # initialize list containing costs
-                cost_list = []
-                cost_list_omni = [] # this one contains the cost if the noise was known in advance
-
-                # initialize list of noise samples
-                w_list = []
-
-                # initialize counter of feasible noise samples
-                done_samples = 0
-
-                # generate noise samples until we have generated both training and testing samples
-                while done_samples < 2*noise_samples:
-
-                    # flag representing failure of receding horizon problem
-                    receding_horizon_failed = False
-
-                    # generate a new sample
-                    sample_candidate = ( 2*np.random.rand(model['dim']['w'],horizon)-np.ones((model['dim']['w'],horizon)) ) * NOISE_MAG
-
-                    # try to solve the trajectory optimization problem with this sample
-                    cost_candidate,*_ = traj_solver(model['theta_true'],model['x0'],sample_candidate)
-                    
-                    # if cost is infinite, continue to the next model
-                    if cost_candidate == ca.inf:
-                        # print('Full problem infeasible')
-                        continue
-
-                    # if it succeeds, run in feedback to obtain best feedback cost
-                    X = [model['x0']]
-                    U = []
-                    x_opti_t = None
-
-                    for w_t in np.hsplit(sample_candidate,sample_candidate.shape[1]):
-                        
-                        # solve optimization problem
-                        cost_t,x_opti_t,u_t = traj_solver(model['theta_true'],X[-1],0*sample_candidate,x_opti_t)
-
-                        # check if problem was feasible
-                        if cost_t == ca.inf:
-                            # print('Receding horizon problem failed')
-                            receding_horizon_failed = True
-                            continue
-
-                        # store input
-                        U.append(u_t)
-                            
-                        # otherwise, propagate dynamics
-                        X.append(model['f'](X[-1],u_t,w_t))
-
-                    # skip if receding horizon failed
-                    if receding_horizon_failed:
-                        continue
-
-                    # compute cost
-                    cost_candidate_feedback = ca.vcat(X).T@ca.kron(ca.DM.eye(model['dim']['horizon']+1),upper_level_specs['Q'])@ca.vcat(X) \
-                                                + ca.vcat(U).T@ca.kron(ca.DM.eye(model['dim']['horizon']),upper_level_specs['R'])@ca.vcat(U)
-
-                    # append cost and move on
-                    cost_list.append(cost_candidate_feedback)
-                    cost_list_omni.append(cost_candidate)
-                    w_list.append(ca.horzsplit(sample_candidate))
-                    done_samples += 1
-                    print(f'Model: {i}, done samples: {done_samples}')
-                
-                # divide into training and testing samples
-                model['w0'] = w_list[:noise_samples]
-                model['w0_testing'] = w_list[noise_samples:]
-                model['best_cost'] = cost_list[:noise_samples]
-                model['best_cost_omni'] = cost_list_omni[:noise_samples]
-                model['best_cost_testing'] = cost_list[noise_samples:]
-                model['best_cost_testing_omni'] = cost_list_omni[noise_samples:]
-                model['cost_spec'] = upper_level_specs
-            
-            # no noise is used, but we still need to solve the trajectory optimization problem
-            else:
-                # solve the trajectory optimization problem
-                best_cost = traj_solver(model['theta_true'],model['x0'])
+                # check if problem is feasible without noise
+                best_cost,x_opti,u0 = traj_solver(model['theta_true'],model['x0'],ca.DM(model['dim']['w'],horizon)) if use_noise else traj_solver(model['theta_true'],model['x0'])
 
                 # if cost is infinite, continue to the next model
                 if best_cost == ca.inf:
-                    continue
+                    print('cost is infinite')
+                    raise Exception()
 
-                # add cost to model
-                model['best_cost'] = best_cost
-                model['cost_spec'] = upper_level_specs
+                # generate random noise if requested
+                if use_noise:
 
-        else:
-            # if feasible_only is False, we do not need to solve the trajectory optimization problem
-            # check if noise needs to be generated
-            if use_noise:
-                # generate noise samples (list of lists)
-                model['w0'] = [ca.horzsplit(2*np.random.rand(model['dim']['w'],horizon)-np.ones((model['dim']['w'],horizon))) for _ in range(noise_samples)]
-                # generate testing noise samples
-                model['w0_testing'] = [ca.horzsplit(2*np.random.rand(model['dim']['w'],horizon)-np.ones((model['dim']['w'],horizon))) for _ in range(noise_samples)]
-                # add infinite cost
-                model['best_cost'] = [ca.inf]*noise_samples
-                model['best_cost_testing'] = [ca.inf]*noise_samples
-                model['cost_spec'] = None
+                    if consecutive_failures >= 30:
+                        raise Exception()
+
+                    # initialize list containing costs
+                    cost_list = []
+                    cost_list_omni = [] # this one contains the cost if the noise was known in advance
+
+                    # initialize list of noise samples
+                    w_list = []
+
+                    # initialize counter of feasible noise samples
+                    done_samples = 0
+
+                    # generate noise samples until we have generated both training and testing samples
+                    while done_samples < 2*noise_samples:
+
+                        # flag representing failure of receding horizon problem
+                        receding_horizon_failed = False
+
+                        # generate a new sample
+                        sample_candidate = ( 2*np.random.rand(model['dim']['w'],horizon)-np.ones((model['dim']['w'],horizon)) ) * NOISE_MAG
+
+                        # try to solve the trajectory optimization problem with this sample
+                        cost_candidate,*_ = traj_solver(model['theta_true'],model['x0'],sample_candidate)
+                        
+                        # if cost is infinite, continue to the next model
+                        if cost_candidate == ca.inf:
+                            print('Full problem infeasible')
+                            consecutive_failures += 1
+                            continue
+
+                        # if it succeeds, run in feedback to obtain best feedback cost
+                        X = [model['x0']]
+                        U = []
+                        x_opti_t = None
+
+                        for w_t in np.hsplit(sample_candidate,sample_candidate.shape[1]):
+                            
+                            # solve optimization problem
+                            cost_t,x_opti_t,u_t = traj_solver(model['theta_true'],X[-1],0*sample_candidate,x_opti_t)
+
+                            # check if problem was feasible
+                            if cost_t == ca.inf:
+                                # print('Receding horizon problem failed')
+                                receding_horizon_failed = True
+                                continue
+
+                            # store input
+                            U.append(u_t)
+                                
+                            # otherwise, propagate dynamics
+                            X.append(model['f'](X[-1],u_t,w_t))
+
+                        # skip if receding horizon failed
+                        if receding_horizon_failed:
+                            continue
+
+                        # compute cost
+                        cost_candidate_feedback = ca.vcat(X).T@ca.kron(ca.DM.eye(model['dim']['horizon']+1),upper_level_specs['Q'])@ca.vcat(X) \
+                                                    + ca.vcat(U).T@ca.kron(ca.DM.eye(model['dim']['horizon']),upper_level_specs['R'])@ca.vcat(U)
+
+                        # append cost and move on
+                        cost_list.append(cost_candidate_feedback)
+                        cost_list_omni.append(cost_candidate)
+                        w_list.append(ca.horzsplit(sample_candidate))
+                        done_samples += 1
+                        print(f'Model: {i}, done samples: {done_samples}')
+                
+                    # divide into training and testing samples
+                    model['w0'] = w_list[:noise_samples]
+                    model['w0_testing'] = w_list[noise_samples:]
+                    model['best_cost'] = cost_list[:noise_samples]
+                    model['best_cost_omni'] = cost_list_omni[:noise_samples]
+                    model['best_cost_testing'] = cost_list[noise_samples:]
+                    model['best_cost_testing_omni'] = cost_list_omni[noise_samples:]
+                    model['cost_spec'] = upper_level_specs
+
+                # no noise is used, but we still need to solve the trajectory optimization problem
+                else:
+                    # solve the trajectory optimization problem
+                    best_cost = traj_solver(model['theta_true'],model['x0'])
+
+                    # if cost is infinite, continue to the next model
+                    if best_cost == ca.inf:
+                        continue
+
+                    # add cost to model
+                    model['best_cost'] = best_cost
+                    model['cost_spec'] = upper_level_specs
+
+
+
             else:
-                model['best_cost'] = ca.inf
-                model['cost_spec'] = None
+                # if feasible_only is False, we do not need to solve the trajectory optimization problem
+                # check if noise needs to be generated
+                if use_noise:
+                    # generate noise samples (list of lists)
+                    model['w0'] = [ca.horzsplit(2*np.random.rand(model['dim']['w'],horizon)-np.ones((model['dim']['w'],horizon))) for _ in range(noise_samples)]
+                    # generate testing noise samples
+                    model['w0_testing'] = [ca.horzsplit(2*np.random.rand(model['dim']['w'],horizon)-np.ones((model['dim']['w'],horizon))) for _ in range(noise_samples)]
+                    # add infinite cost
+                    model['best_cost'] = [ca.inf]*noise_samples
+                    model['best_cost_testing'] = [ca.inf]*noise_samples
+                    model['cost_spec'] = None
+                else:
+                    model['best_cost'] = ca.inf
+                    model['cost_spec'] = None
 
-        # if the model is feasible, append it to the list
-        model_list.append(model)
-        i += 1
-        print(f'Done: {i} out of {n_models}')
+            # if the model is feasible, append it to the list
+            model_list.append(model)
+            i += 1
+            print(f'Done: {i} out of {n_models}')
+
+        except:
+            pass
 
     return model_list
 
@@ -474,7 +488,7 @@ def generate_trajectory_optimization_solver(model:dict,upper_level_specs:dict) -
     opti.minimize(cost)
 
     # solver
-    opts = {'print_time':False}
+    opts = {'print_time':False,'error_on_fail':False}
 
     # option 1: qpOASES
     # opts['printLevel'] = 'none'
@@ -503,7 +517,7 @@ def generate_trajectory_optimization_solver(model:dict,upper_level_specs:dict) -
     # opts['ipopt'] = {"sb":'yes','print_level':0}
     # opti.solver('ipopt',opts)
 
-    opti.solver('daqp')
+    opti.solver('daqp',opts)
 
     # turn into function
     if model['dim']['w'] > 0:
@@ -514,16 +528,18 @@ def generate_trajectory_optimization_solver(model:dict,upper_level_specs:dict) -
             opti.set_value(x0,x0_val)
             if x_opti_init is not None:
                 opti.set_initial(opti.x,x_opti_init)
-            with suppress_output():
-                try:
-                    sol = opti.solve()
-                    best_cost = sol.value(cost)
-                    x_out = sol.value(opti.x)
-                    u_out = sol.value(u[:,0])
-                except:
-                    best_cost = ca.inf
-                    x_out = None
-                    u_out = None
+            # with suppress_output():
+
+            try:
+                sol = opti.solve()
+                best_cost = sol.value(cost)
+                x_out = sol.value(opti.x)
+                u_out = sol.value(u[:,0])
+            except:
+                best_cost = ca.inf
+                x_out = None
+                u_out = None
+
             return best_cost,x_out,u_out
     else:
         # solver = opti.to_function("f",[theta],[cost])
