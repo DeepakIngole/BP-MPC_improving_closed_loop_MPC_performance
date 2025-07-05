@@ -75,7 +75,7 @@ MPC_S_LIN = 25
 UPDATE_ALGORITHM = 'gd'
 
 # select a single model in the list (set to None to simulate all models)
-MODEL_SELECT = 2 # [1,2]
+MODEL_SELECT = None
 
 # choose if certainty equivalence should be used
 CERTAINTY_EQUIVALENCE = True
@@ -146,9 +146,14 @@ main_dir = '/'.join(cwd.split('/')[:-2])
 models_dir = os.path.join(main_dir, '.models')
 all_models = glob(models_dir + "/*.pkl")
 
+# remove models that don't have noise
+all_models_noise = [model for model in all_models if 'NOISE' in model]
+
+assert len(all_models_noise) > 0, 'No noisy models found.'
+
 # Extract the datetime from the string
 datetimes = []
-for s in all_models:
+for s in all_models_noise:
     # Extract the datetime string using split
     parts = s.split('/')
     date_str = parts[-1].split('_random')[0]  # '2025_05_23_13_15_47'
@@ -159,7 +164,7 @@ for s in all_models:
 most_recent_index = max(range(len(datetimes)), key=lambda index: datetimes[index])
 
 # load using pickle
-with open(all_models[most_recent_index], 'rb') as f:
+with open(all_models_noise[most_recent_index], 'rb') as f:
     model_list = pickle.load(f)
 
 
