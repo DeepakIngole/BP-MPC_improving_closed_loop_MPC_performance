@@ -54,7 +54,7 @@ N_MODELS = 10
 
 # horizons
 MPC_HORIZON = 5
-ITERATIONS = 500
+ITERATIONS = 1000
 
 # penalties on constraint violation (closed-loop)
 L2_PENALTY = 100
@@ -99,10 +99,10 @@ elif UPDATE_ALGORITHM == 'gd':
 
         # gd paramers (CE)
         RHO = 2.5e-1
-        ETA = 0.51
+        ETA = 0.8
         LOG = True
         CLIP = 150
-        BATCH_SIZE = 5
+        BATCH_SIZE = 10
         SGD = True
 
     else:
