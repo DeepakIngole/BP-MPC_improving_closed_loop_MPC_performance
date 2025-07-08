@@ -27,7 +27,7 @@ class Scenario:
                                'compute_qp_ingredients': bool, 'verbosity': [0, 1, 2], 'max_k': int,
                                'use_true_model': bool, 'simulate_parallel_models': bool,
                                'compile_mapped_dynamics':bool,'true_theta':np.ndarray,'save_memory':bool,
-                               'cst_tol':float}
+                               'cst_tol':float,'simulate_nominal':bool,'batch_size':int}
 
     _OPTIONS_DEFAULT_VALUES = {'shift_linearization': True, 'warmstart_first_qp': True, 'warmstart_shift': True,
                                'epsilon': 1e-6, 'roundoff_qp': 10, 'mode': 'optimize', 'gd_type': 'gd',
@@ -35,7 +35,7 @@ class Scenario:
                                'compute_qp_ingredients': False, 'verbosity': 1, 'max_k': 200,
                                'use_true_model': True, 'simulate_parallel_models': False,
                                'compile_mapped_dynamics':False,'true_theta':np.zeros(1),'save_memory':False,
-                               'cst_tol':1e-10}
+                               'cst_tol':1e-10,'simulate_nominal':False,'batch_size':1}
 
     @typechecked
     def __init__(self,dyn:Dynamics,mpc:QP,upper_level:UpperLevel):
@@ -584,6 +584,9 @@ class Scenario:
         # check if multiple models have been passed
         single_model = False if n_models > 1 else True
 
+        # check if nominal dynamics should be used
+        simulate_true_dynamics = not options['simulate_nominal']
+
         # flag to check if QP failed
         qp_failed = False
 
@@ -816,7 +819,7 @@ class Scenario:
                 total_jac_time.append(time.time() - cons_jac_time)
 
             # get next state
-            x_t = self.dyn.f.call(var_in_dyn)['x_next']
+            x_t = self.dyn.f.call(var_in_dyn)['x_next'] if simulate_true_dynamics else self.dyn.f_nom.call(var_in_dyn_nom)['x_next']
 
             # update qp variable dictionary
             var_in_qp['x'] = x_t
@@ -929,13 +932,14 @@ class Scenario:
         if sim_options['gd_type'] == 'gd':
             batch_size = n_samples
         elif sim_options['gd_type'] == 'sgd':
-            batch_size = sim_options['batch_size'] if 'batch_size' in options else 1
+            batch_size = sim_options['batch_size']
 
         # check that batch size does not exceed number of samples
         assert batch_size <= n_samples, 'Batch size cannot exceed number of samples.'
         
         # extract maximum number of iterations
-        max_k = sim_options['max_k'] * batch_size
+        # max_k = sim_options['max_k'] * batch_size
+        max_k = sim_options['max_k']
 
         # extract gradient of cost function
         j_cost_f = self.upper_level.j_cost if n_models == 1 else self._mapped['j_cost']

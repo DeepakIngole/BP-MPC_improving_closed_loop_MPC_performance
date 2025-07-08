@@ -54,7 +54,7 @@ N_MODELS = 10
 
 # horizons
 MPC_HORIZON = 5
-ITERATIONS = 1000
+ITERATIONS = 500
 
 # penalties on constraint violation (closed-loop)
 L2_PENALTY = 100
@@ -85,10 +85,10 @@ CERTAINTY_EQUIVALENCE = True
 if UPDATE_ALGORITHM == 'Adam':
 
     # Adam parameters
-    ADAM_ALPHA = 0.01
-    ADAM_EPSILON = 1e-7
-    ADAM_BETA_1 = 0.6
-    ADAM_BETA_2 = 0.9
+    ADAM_ALPHA = 0.15
+    ADAM_EPSILON = 1e-6
+    ADAM_BETA_1 = 0.5
+    ADAM_BETA_2 = 0.8
 
     # save in dictionary
     hyper_parameters = {'alg':UPDATE_ALGORITHM, 'alpha':ADAM_ALPHA, 'epsilon':ADAM_EPSILON, 'beta_1':ADAM_BETA_1, 'beta_2':ADAM_BETA_2, 'iterations':ITERATIONS}
@@ -98,12 +98,11 @@ elif UPDATE_ALGORITHM == 'gd':
     if CERTAINTY_EQUIVALENCE:
 
         # gd paramers (CE)
-        RHO = 2.5e-1
+        RHO = 0.075
         ETA = 0.8
         LOG = True
         CLIP = 150
-        BATCH_SIZE = 10
-        SGD = True
+        BATCH_SIZE = 1
 
     else:
 
@@ -195,6 +194,7 @@ columns.extend([("Training Cost (Untrained-Trained-Difference)", 44),
                 ("Training Best (Feedback-Omniscient)", 49),
                 ("Testing Cost (Trained-Difference)", 33),
                 ("Testing Best (Feedback-Omniscient)", 49),
+                ("Dare cost",11),
                 ('Error on identified theta', 25)])
 if PRINT_CK:
     columns.append(("Uncertainty radius", 18))
@@ -310,6 +310,7 @@ for i,model in enumerate(model_to_simulate):
         # create upper level
         upper_level = UpperLevel(p=p, pf=pf, horizon=model['dim']['horizon'], mpc=mpc)
         # compute terminal cost initialization
+        # p_init = ca.vertcat(quad_cost_2_param(Q_true), dare2param(A, B, Q_true, R_true), R_true)
         p_init = ca.vertcat(quad_cost_2_param(Q_true), quad_cost_2_param(Q_true), R_true)
     else:
         # create MPC
@@ -317,6 +318,7 @@ for i,model in enumerate(model_to_simulate):
         # create upper level
         upper_level = UpperLevel(p=p, horizon=model['dim']['horizon'], mpc=mpc)
         # compute terminal cost initialization
+        # p_init = ca.vertcat(quad_cost_2_param(Q_true), dare2param(A, B, Q_true, R_true), R_true, theta0)
         p_init = ca.vertcat(quad_cost_2_param(Q_true), quad_cost_2_param(Q_true), R_true, theta0)
 
     if MODE == 'robust':
@@ -416,6 +418,7 @@ for i,model in enumerate(model_to_simulate):
     scenario = Scenario(dyn,mpc,upper_level)
 
     # initialize
+    # init_dict = {'p':p_init,'pf':model['theta_true'],'x': x0,'theta':model['theta_true']} if CERTAINTY_EQUIVALENCE else {'p':p_init,'x': x0,'theta':theta0}
     init_dict = {'p':p_init,'pf':theta0,'x': x0,'theta':theta0} if CERTAINTY_EQUIVALENCE else {'p':p_init,'x': x0,'theta':theta0}
     init_dict['w'] = model['w0']
 
@@ -454,13 +457,20 @@ for i,model in enumerate(model_to_simulate):
     else:
 
         # get average training cost for untrained parameter
-        sim_list_training_untrained,_,_,qp_failed_untrained = scenario.closed_loop(options=sim_options|{'mode':'simulate','max_k':1},init=init_dict.copy())
+        sim_list_training_untrained,_,_,qp_failed_untrained = scenario.closed_loop(options=sim_options|{'mode':'simulate','max_k':len(model['w0'])},init=init_dict.copy())
 
-        # test closed loop
-        if SGD:
-            sim_list,_,_,qp_failed_closed_loop = scenario.closed_loop(options=sim_options|{'random_sampling':True, 'gd_type':'sgd'},init=init_dict)
-        else:
-            sim_list,_,_,qp_failed_closed_loop = scenario.closed_loop(options=sim_options,init=init_dict)
+        # # run without noise for a few iterations
+        # init_dict_nominal = init_dict.copy()
+        # init_dict_nominal['max_k'] = 10
+        # sim_options_nominal = sim_options.copy()
+        # sim_options_nominal['simulate_nominal'] = True
+        # p_nominal_trained = scenario.closed_loop(options=sim_options_nominal,init=init_dict_nominal)[2]
+
+        # # update parameter value
+        # init_dict['p'] = p_nominal_trained
+
+        # run closed loop
+        sim_list,_,_,qp_failed_closed_loop = scenario.closed_loop(options=sim_options|{'random_sampling':False, 'gd_type':'sgd', 'batch_size':len(model['w0'])},init=init_dict)
 
         # compute cost and constraint violation improvement
         cost = [sim.cost for sim in sim_list]
@@ -476,7 +486,7 @@ for i,model in enumerate(model_to_simulate):
         init_dict_training_trained['p'] = p_list[-1]
         if CERTAINTY_EQUIVALENCE:
             init_dict_training_trained['pf'] = theta_last
-        sim_list_training_trained,_,_,qp_failed_trained = scenario.closed_loop(options=sim_options|{'mode':'simulate','max_k':1},init=init_dict_training_trained)
+        sim_list_training_trained,_,_,qp_failed_trained = scenario.closed_loop(options=sim_options|{'mode':'simulate','max_k':len(model['w0'])},init=init_dict_training_trained)
 
         # get untrained and trained costs
         untrained_cost = [sim.cost for sim in sim_list_training_untrained]
@@ -502,7 +512,7 @@ for i,model in enumerate(model_to_simulate):
                 init_dict_validate['pf'] = theta_last
 
             # run in simulation mode
-            sim_list_validate,*_ = scenario.closed_loop(options=sim_options|{'mode':'simulate','max_k':1},init=init_dict_validate)
+            sim_list_validate,*_ = scenario.closed_loop(options=sim_options|{'mode':'simulate','max_k':len(model['w0'])},init=init_dict_validate)
 
             # get cost
             cost_validate = [sim.cost for sim in sim_list_validate]
@@ -511,6 +521,17 @@ for i,model in enumerate(model_to_simulate):
             # compute mean cost
             mean_cost_validate = np.mean(np.array(cost_validate))
             max_cst_validate = np.max(np.sum(np.maximum(np.hstack(cst_validate),0),axis=0))
+
+            # run with DARE solution and trained model
+            A_trained = dyn.A_nom(ca.DM(n_x,1),ca.DM(n_u,1),theta_last)
+            B_trained = dyn.B_nom(ca.DM(n_x,1),ca.DM(n_u,1),theta_last)
+            p_dare = ca.vertcat(quad_cost_2_param(Q_true), dare2param(A_trained, B_trained, Q_true, R_true), R_true)
+            init_dict_validate['p'] = p_dare
+            sim_list_validate_dare,*_ = scenario.closed_loop(options=sim_options|{'mode':'simulate','max_k':len(model['w0'])},init=init_dict_validate)
+
+            # get cost
+            cost_dare = [sim.cost for sim in sim_list_validate_dare]
+            cost_dare_mean = np.mean(np.array(cost_dare))
 
         else:
 
@@ -524,6 +545,7 @@ for i,model in enumerate(model_to_simulate):
         best_cost_omni_training = np.mean(np.array(model['best_cost_omni']))
                                 
         # setup printout strings
+        dare_cost_string = '{0:0.4f}'.format(cost_dare_mean)
         cst_viol_string_training = '{0:0.4f}'.format(max_untrained_cst) + ' | ' + '{0:0.4f}'.format(max_trained_cst)
         cst_viol_string_testing = '{0:0.4f}'.format(max_cst_validate)
         training_cost_string =  '{0:0.4f}'.format(mean_untrained_cost) + ' | ' + \
@@ -552,7 +574,7 @@ for i,model in enumerate(model_to_simulate):
         to_print = [MODEL_SELECT[i]] if MODEL_SELECT is not None else [i]
         if PRINT_CST_VIOL:
             to_print.extend([cst_viol_string_training,cst_viol_string_testing])
-        to_print.extend([training_cost_string,best_training_cost_string,testing_cost_string,best_testing_cost_string,theta_error_string])
+        to_print.extend([training_cost_string,best_training_cost_string,testing_cost_string,best_testing_cost_string,dare_cost_string,theta_error_string])
         if PRINT_CK:
             to_print.append(c_k_string)
         to_print.append(qp_failed)
@@ -566,7 +588,7 @@ for i,model in enumerate(model_to_simulate):
         # pack results
         results = {'constraint_violation_training':[max_untrained_cst,max_trained_cst,max_cst_validate],
                     'cost':cost,
-                    'validation_cost':{'alg':mean_cost_validate,'best_feedback':best_cost_testing,'best_omni':best_cost_omni_testing},
+                    'validation_cost':{'alg':mean_cost_validate,'best_feedback':best_cost_testing,'best_omni':best_cost_omni_testing,'dare':cost_dare_mean},
                     'training_cost':{'alg_trained':mean_trained_cost,'alg_untrained':mean_untrained_cost,'best_feedback':best_cost_training,'best_omni':best_cost_omni_training},
                     'qp_failed':qp_failed,
                     'c_k':c_k,

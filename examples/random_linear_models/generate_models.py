@@ -34,8 +34,8 @@ MODE = 'full'
 X0_MAG = 1.5
 
 # decide whether to include noise or not
-NOISE_MAG = 0.0
-NOISE_SAMPLES = 0
+NOISE_MAG = 0.1
+NOISE_SAMPLES = 500
 
 # number of models used in robust GD
 N_MODELS = 50
