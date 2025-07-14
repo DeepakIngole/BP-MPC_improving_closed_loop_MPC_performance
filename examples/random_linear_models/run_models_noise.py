@@ -75,7 +75,7 @@ MPC_S_LIN = 25
 UPDATE_ALGORITHM = 'gd'
 
 # select a single model in the list (set to None to simulate all models)
-MODEL_SELECT = None
+MODEL_SELECT = 46
 
 # choose if certainty equivalence should be used
 CERTAINTY_EQUIVALENCE = True
@@ -101,7 +101,7 @@ elif UPDATE_ALGORITHM == 'gd':
         RHO = 0.075
         ETA = 0.8
         LOG = True
-        CLIP = 150
+        CLIP = 15
         BATCH_SIZE = 1
 
     else:

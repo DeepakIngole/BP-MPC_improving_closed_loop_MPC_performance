@@ -497,21 +497,6 @@ def generate_trajectory_optimization_solver(model:dict,upper_level_specs:dict) -
     # option 2: osqp
     # opts['osqp'] = {"verbose":False}
     # opti.solver('osqp',opts)
-    
-    import sys, os, contextlib
-
-    @contextlib.contextmanager
-    def suppress_output():
-        with open(os.devnull, 'w') as fnull:
-            old_stdout = sys.stdout
-            old_stderr = sys.stderr
-            sys.stdout = fnull
-            sys.stderr = fnull
-            try:
-                yield
-            finally:
-                sys.stdout = old_stdout
-                sys.stderr = old_stderr
 
     # option 3: ipopt
     # opts['ipopt'] = {"sb":'yes','print_level':0}
@@ -521,7 +506,24 @@ def generate_trajectory_optimization_solver(model:dict,upper_level_specs:dict) -
 
     # turn into function
     if model['dim']['w'] > 0:
-        # solver = opti.to_function("f",[theta,w],[cost])
+        
+        # # turn into function for speed
+        # solver_compiled = opti.to_function("f",[theta,w,x0,opti.x],[cost,opti.x,u[:,0]])
+
+        # # get shape of opti.x
+        # opti_x_shape = opti.x.shape
+
+        # def solver(theta_val,x0_val,w_val,x_opti_init=None):
+        #     if x_opti_init is None:
+        #         x_opti_init = 0.01*ca.DM.ones(*opti_x_shape)
+        #     try:
+        #         best_cost, x_out, u_out = solver_compiled(theta_val,w_val,x0_val,x_opti_init)
+        #     except:
+        #         best_cost = ca.inf
+        #         x_out = None
+        #         u_out = None
+
+        #     return best_cost,x_out,u_out
         def solver(theta_val,x0_val,w_val,x_opti_init=None):
             opti.set_value(theta,theta_val)
             opti.set_value(w,w_val)
