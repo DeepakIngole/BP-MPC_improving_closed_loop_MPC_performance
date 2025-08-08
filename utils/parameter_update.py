@@ -578,10 +578,20 @@ def gd_rule_sat(p:ca.DM,j_p:ca.DM,k:int,rho:float,eta:float,log:bool,clip:float)
     # compute gradient norm
     j_p_norm = ca.norm_2(j_p)
 
-    # scale gradient
-    j_p_scaled = clip * j_p / j_p_norm if j_p_norm > clip else j_p
+    # check if gradient norm is not too large
+    if j_p_norm <= 1e5:
 
-    return p - (rho*ca.log(k+1)/(k+1)**eta)*j_p_scaled if log else p - (rho/(k+1)**eta)*j_p_scaled
+        # scale gradient
+        j_p_scaled = clip * j_p / j_p_norm if j_p_norm > clip else j_p
+
+        # compute update
+        p_next = p - (rho*ca.log(k+1)/(k+1)**eta)*j_p_scaled if log else p - (rho/(k+1)**eta)*j_p_scaled
+
+    # otherwise, do not update
+    else:
+        p_next = p
+
+    return p_next
 
 def adam_rule(
         p:ca.DM,
