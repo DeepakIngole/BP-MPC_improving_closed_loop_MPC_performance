@@ -26,14 +26,16 @@ class Scenario:
                                'gd_type': ['gd', 'sgd'], 'figures': bool, 'random_sampling': bool, 'debug_qp': bool,
                                'compute_qp_ingredients': bool, 'verbosity': [0, 1, 2], 'max_k': int,
                                'use_true_model': bool, 'simulate_parallel_models': bool,
-                               'compile_mapped_dynamics':bool,'true_theta':np.ndarray,'save_memory':bool}
+                               'compile_mapped_dynamics':bool,'true_theta':np.ndarray,'save_memory':bool,
+                               'cst_tol':float,'simulate_nominal':bool,'batch_size':int}
 
     _OPTIONS_DEFAULT_VALUES = {'shift_linearization': True, 'warmstart_first_qp': True, 'warmstart_shift': True,
                                'epsilon': 1e-6, 'roundoff_qp': 10, 'mode': 'optimize', 'gd_type': 'gd',
                                'figures': False, 'random_sampling': False, 'debug_qp': False,
                                'compute_qp_ingredients': False, 'verbosity': 1, 'max_k': 200,
                                'use_true_model': True, 'simulate_parallel_models': False,
-                               'compile_mapped_dynamics':False,'true_theta':np.zeros(1),'save_memory':False}
+                               'compile_mapped_dynamics':False,'true_theta':np.zeros(1),'save_memory':False,
+                               'cst_tol':1e-10,'simulate_nominal':False,'batch_size':1}
 
     @typechecked
     def __init__(self,dyn:Dynamics,mpc:QP,upper_level:UpperLevel):
@@ -471,13 +473,14 @@ class Scenario:
             raise Exception('Model uncertainty d is required to simulate the system.')
 
         # extract variables
-        p = init_values['p'] if 'p' in init_values else None                # parameters
-        pf = init_values['pf'] if 'pf' in init_values else None             # fixed parameters
-        w = init_values['w'] if 'w' in init_values else None                # noise
-        d = init_values['d'] if 'd' in init_values else None                # model uncertainty
-        theta = init_values['theta'] if 'theta' in init_values else None    # nominal model
-        y = init_values['y_lin'] if 'y_lin' in init_values else None        # linearization trajectory
-        x = init_values['x']                                                # initial state
+        none_block = None if max_length == 1 else [None] * max_length
+        p = init_values['p'] if 'p' in init_values else none_block              # parameters
+        pf = init_values['pf'] if 'pf' in init_values else none_block           # fixed parameters
+        w = init_values['w'] if 'w' in init_values else none_block              # noise
+        d = init_values['d'] if 'd' in init_values else none_block              # model uncertainty
+        theta = init_values['theta'] if 'theta' in init_values else none_block  # nominal model
+        y = init_values['y_lin'] if 'y_lin' in init_values else none_block      # linearization trajectory
+        x = init_values['x']                                                    # initial state
 
         return p,pf,w,d,theta,y,x
 
@@ -580,6 +583,9 @@ class Scenario:
 
         # check if multiple models have been passed
         single_model = False if n_models > 1 else True
+
+        # check if nominal dynamics should be used
+        simulate_true_dynamics = not options['simulate_nominal']
 
         # flag to check if QP failed
         qp_failed = False
@@ -813,7 +819,7 @@ class Scenario:
                 total_jac_time.append(time.time() - cons_jac_time)
 
             # get next state
-            x_t = self.dyn.f.call(var_in_dyn)['x_next']
+            x_t = self.dyn.f.call(var_in_dyn)['x_next'] if simulate_true_dynamics else self.dyn.f_nom.call(var_in_dyn_nom)['x_next']
 
             # update qp variable dictionary
             var_in_qp['x'] = x_t
@@ -872,6 +878,7 @@ class Scenario:
                 - verbosity (int, optional, default=1): Level of printout verbosity.
                 - max_k (int, optional, default=200): Maximum number of closed-loop iterations.
                 - use_true_model (bool, optional, default=True): Whether to use the true model for simulation.
+                - cst_tol (float, optional, default = 1e-10): tolerance on when to consider constraints satisfied.
         Returns:
             SIM (list): List of simulation results for each iteration.
             comp_time (dict): Dictionary containing computation times:
@@ -888,7 +895,8 @@ class Scenario:
         n_samples = len(w) if isinstance(w,list) else 1
 
         # if only one sample is passed, turn certain parameters to length-one lists (for compatibility)
-        d, w, theta, x, y = [d], [w], [theta], [x], [y]
+        if n_samples == 1:
+            d, w, x, y = [d], [w], [x], [y]
 
         # create running variable. This variable contains the value of each parameter for a single iteration
         # and it gets updated automatically by the sys_id and the parameter_update subroutines.
@@ -903,7 +911,7 @@ class Scenario:
             #TODO: better check for n_models if theta0 contains many theta. Is it even worth it?
 
             # get number of models (columns of theta)
-            n_models = int(theta[0].shape[1]) if isinstance(theta,list) else theta.shape[1]
+            n_models = theta.shape[1]
 
             # check that mapped (nominal) dynamics have been created
             if not self._mapped:
@@ -924,13 +932,14 @@ class Scenario:
         if sim_options['gd_type'] == 'gd':
             batch_size = n_samples
         elif sim_options['gd_type'] == 'sgd':
-            batch_size = sim_options['batch_size'] if 'batch_size' in options else 1
+            batch_size = sim_options['batch_size']
 
         # check that batch size does not exceed number of samples
         assert batch_size <= n_samples, 'Batch size cannot exceed number of samples.'
         
         # extract maximum number of iterations
-        max_k = sim_options['max_k'] * batch_size
+        # max_k = sim_options['max_k'] * batch_size
+        max_k = sim_options['max_k']
 
         # extract gradient of cost function
         j_cost_f = self.upper_level.j_cost if n_models == 1 else self._mapped['j_cost']
@@ -952,7 +961,7 @@ class Scenario:
         p_best = p
 
         # check if sys_id should be performed
-        if self.upper_level.sys_id_update is not None:
+        if self.upper_level.sys_id_update is not None and sim_options['mode'] == 'optimize':
             sys_id = True
             running_vars = running_vars | self.upper_level.sys_id_init()
         else:
@@ -991,7 +1000,7 @@ class Scenario:
             idx = randint(0,n_samples-1) if sim_options['random_sampling'] else int(ca.fmod(k,batch_size))
 
             # update running vars with samples for iteration k
-            running_vars = running_vars | {'d':d[idx], 'w':w[idx], 'x':x[idx], 'y':y[idx], 'theta':theta[idx]} | sys_id_vars
+            running_vars = running_vars | {'d':d[idx], 'w':w[idx], 'x':x[idx], 'y':y[idx], 'theta':theta} | sys_id_vars
 
             # run simulation
             sim_k, qp_data, qp_failed = self._simulate(var_in=running_vars,options=sim_options,n_models=n_models)
@@ -1000,8 +1009,35 @@ class Scenario:
             if qp_failed:
                 break
 
+            # run sys_id if needed
+            sys_id_vars = sys_id_vars | self._upper_level.sys_id_update(sim_k, running_vars, k) if sys_id else {}
+
+            # on first iteration, initialize psi
+            if k == 0 and sim_options['mode'] == 'optimize':
+                running_vars = running_vars | self.upper_level.parameter_init(sim_k)
+
+            # store psi in simvar
+            sim_k.psi = running_vars | sys_id_vars
+
             # compute cost and constraint violation
             cost,track_cost,cst_viol = self.upper_level.cost(sim_k)
+
+            # if there is no constraint violation, and the cost has improved, save current parameter as best parameter
+            if ca.sum1(cst_viol) <= sim_options['cst_tol'] and cost < best_cost:
+            # if cost < best_cost:
+                best_cost, p_best = cost, p
+
+            # if in optimization mode, update parameters
+            if sim_options['mode'] == 'optimize':
+
+                # compute gradient of upper-level cost function and store in simvar
+                sim_k.j_p = j_cost_f(sim_k)
+
+                # update parameter
+                running_vars = running_vars | self.upper_level.parameter_update(sim_k, k)
+
+            else:
+                sim_k.j_p = np.zeros((2, 1))  # I need a vector for compatibility with the printout
             
             # store S into list
             sim.append(sim_k)
@@ -1011,34 +1047,8 @@ class Scenario:
             total_jac_time.append(qp_data['jac_time'])
 
             # store cost and constraint violation
-            sim_k.cost = cost
+            sim_k.cost = track_cost
             sim_k.cst = cst_viol
-
-            # run sys_id if needed
-            sys_id_vars = sys_id_vars | self._upper_level.sys_id_update(sim_k,running_vars,k) if sys_id else {}
-
-            # if in optimization mode, update parameters
-            if sim_options['mode'] == 'optimize':
-
-                # if there is no constraint violation, and the cost has improved, save current parameter as best parameter
-                if ca.sum1(cst_viol) == 0 and cost < best_cost:
-                    best_cost, p_best = cost, p
-
-                # compute gradient of upper-level cost function and store in simvar
-                sim_k.j_p = j_cost_f(sim_k)
-
-                # on first iteration, initialize psi
-                if k == 0:
-                    running_vars = running_vars | self.upper_level.parameter_init(sim_k)
-
-                # store psi in simvar
-                sim_k.psi = running_vars
-
-                # update parameter
-                running_vars = running_vars | self.upper_level.parameter_update(sim_k,k)
-                
-            else:
-                sim_k.j_p = np.zeros((2,1)) # I need a vector for compatibility with the printout
 
             if sim_options['save_memory']:
                 sim_k.save_memory()
@@ -1055,7 +1065,7 @@ class Scenario:
                     if sys_id and self.options['true_theta'] is not np.zeros(1):
 
                         # compute estimation error
-                        est_error = np.mean(np.linalg.norm(running_vars['theta']-self.options['true_theta'],axis=1))
+                        est_error = np.mean(np.linalg.norm(sim_k.psi['theta']-sim_options['true_theta'],axis=1))
 
                         to_print += f', Current estimation error: {est_error}'
                     

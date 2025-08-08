@@ -87,6 +87,45 @@ def get_robust_descent_solver(
     return solver
 
 
+def adam(
+        alpha: float = 0.001,
+        beta_1: float = 0.9,
+        beta_2: float = 0.999,
+        epsilon: float = 1e-8,
+    ) -> Tuple[Callable, Callable]:
+    """
+    Standard Adam optimizer.
+    Args:
+        n_p (int): Number of parameters to optimize.
+        alpha (float, optional): Learning rate for the Adam optimizer. Default is 0.001.
+        beta_1 (float, optional): Exponential decay rate for the first moment estimates. Default is 0.9.
+        beta_2 (float, optional): Exponential decay rate for the second moment estimates. Default is 0.999.
+        epsilon (float, optional): Small constant for numerical stability. Default is 1e-8.
+        jit (bool, optional): Whether to use just-in-time compilation for the solver. Default is False.
+        verbose (bool, optional): Whether to print verbose output during optimization. Default is False.
+    Returns:
+        Tuple[Callable, Callable]:
+            - parameter_update: A function that performs a parameter update given the simulation state and iteration index.
+            - parameter_init: A function that initializes the optimizer's internal state (moments) given the simulation state.
+    Notes:
+        - The returned `parameter_update` function expects a simulation object (`sim`) and the current iteration index (`k`).
+        - The returned `parameter_init` function initializes the first and second moment vectors to zeros with the same shape as the parameters.
+    """
+
+    def parameter_update(sim, k):
+
+        # run Adam update
+        p_next, m_t, v_t = adam_rule(p=sim.p, m_t_1=sim.psi['m'], v_t_1=sim.psi['v'], g_t=sim.j_p,
+                                     k=k, alpha=alpha, beta_1=beta_1, beta_2=beta_2, epsilon=epsilon)
+
+        return {'p': p_next, 'psi': {'m': m_t, 'v': v_t}}
+
+    # no initialization for psi
+    parameter_init = lambda sim: {'m': ca.DM(*sim.p.shape), 'v': ca.DM(*sim.p.shape)}
+
+    return parameter_update, parameter_init
+
+
 def robust_adam(
         n_models:int,
         n_p:int,
@@ -123,7 +162,7 @@ def robust_adam(
     def parameter_update(sim,k):
 
         # get gradient
-        max_gradient_error, g_t = solver(sim)
+        max_gradient_error, g_t = solver(sim.j_p)
 
         # run Adam update
         p_next, m_t, v_t = adam_rule(p=sim.p,m_t_1=sim.psi['m'],v_t_1=sim.psi['v'],g_t=g_t,
@@ -231,6 +270,92 @@ def gradient_descent(rho:float,eta:float=1.0,log:bool=True) -> Tuple[Callable, C
     
     return parameter_update, lambda sim: {}
 
+def gradient_descent_clipped(rho:float,eta:float=1.0,clip:float=300,log:bool=True) -> Tuple[Callable, Callable]:
+    """
+    Performs gradient descent parameter update for a simulation object.
+    Args:
+        rho (float): Regularization or step size parameter for the gradient descent update.
+        eta (float, optional): Learning rate for the gradient descent update. Defaults to 1.0.
+        clip (float): Clip the norm of the gradient.
+        log (bool, optional): If True, enables logging during the update. Defaults to True.
+    Returns:
+        tuple: 
+            - parameter_update (Callable): A function that updates the simulation parameters using gradient descent.
+            - (Callable): An auxiliary function that currently returns an empty dictionary.
+    The returned `parameter_update` function expects arguments `(sim, k)`, where:
+        sim: An object with attributes `p` (parameters) and `j_p` (gradient of the objective with respect to parameters).
+        k: The current iteration or time step.
+    The update rule is performed by the `gd_rule` function (not shown here), which applies the gradient descent step.
+    """
+
+    def parameter_update(sim:SimVar,k:int) -> dict:
+        """
+        Updates the parameter vector using a gradient descent rule.
+
+        Args:
+            sim: An object containing the current simulation state, including:
+                - p: Current parameter vector.
+                - j_p: Gradient of the cost function with respect to the parameters.
+            k (int): The current iteration or time step.
+
+        Returns:
+            dict: A dictionary containing the updated parameter vector with key 'p'.
+
+        Notes:
+            This function applies a gradient descent update rule (gd_rule) to the parameter vector.
+            Additional arguments such as rho, eta, and log are assumed to be available in the scope.
+        """
+
+        # run GD update
+        p_next = gd_rule_sat(p=sim.p,j_p=sim.j_p,k=k,rho=rho,eta=eta,log=log,clip=clip)
+
+        return {'p':p_next}
+    
+    return parameter_update, lambda sim: {}
+
+def heavy_ball(rho,eta,beta_0,log):
+
+    def get_alpha(k):
+        return rho*ca.log(k+2)/(k+1)**eta if log else rho/(k+1)**eta
+
+    alpha_0 = get_alpha(0)
+
+    def get_mu_and_v(k):
+
+        alpha_k = get_alpha(k+1)
+        alpha_k_m1 = get_alpha(k)
+
+        # beta_k = alpha_k / alpha_0 * beta_0
+        beta_k_m1 = alpha_k_m1 / alpha_0 * beta_0
+
+        mu_k = alpha_k * beta_k_m1
+        v_k = alpha_k * ( 1 - beta_k_m1 ) / alpha_k_m1
+
+        return mu_k,v_k
+    
+    def parameter_update(sim:SimVar,k:int) -> dict:
+
+        # get previous parameter
+        p_k_m1 = sim.psi['p']
+
+        # get current parameter
+        p_k = sim.p
+
+        # compute stepsizes
+        mu_k,v_k = get_mu_and_v(k)
+
+        # form update
+        p_k_p1 = p_k - mu_k * sim.j_p + v_k * ( p_k - p_k_m1 )
+
+        # return updated parameter and store previous value
+        return {'p':p_k_p1, 'psi': {'p':p_k}}
+
+    def parameter_init(sim:SimVar) -> dict:
+
+        # no momentum in the first iteration
+        return {'p':sim.p}
+
+    return parameter_update, parameter_init
 
 def minibatch_descent(rho:float,eta:float=1.0,log:bool=True,batch_size:int=1) -> Tuple[Callable, Callable]:
     """
@@ -295,10 +420,77 @@ def minibatch_descent(rho:float,eta:float=1.0,log:bool=True,batch_size:int=1) ->
         Returns:
             dict: A dictionary with a single key 'j_p', whose value is a CasADi DM zero matrix matching the shape of sim.j_p.
         """
-        return {'j_p':ca.DM.zeros(*sim.j_p.shape)}
+        return {'j_p':ca.DM.zeros(*sim.p.shape)}
 
     return parameter_update, parameter_init
 
+def minibatch_descent_clipped(rho:float,eta:float=1.0,log:bool=True,clip:float=100,batch_size:int=1) -> Tuple[Callable, Callable]:
+    """
+    Implements a minibatch gradient descent parameter update rule.
+    Args:
+        rho (float): Learning rate or step size for the update.
+        eta (float, optional): Scaling factor for the update. Defaults to 1.0.
+        log (bool, optional): If True, enables logging during the update. Defaults to True.
+        clip (float, optional): Clip the norm of the gradient. Defaults to 100.
+        batch_size (int, optional): Number of samples in each minibatch. Defaults to 1.
+    Returns:
+        tuple: A tuple containing two functions:
+            - parameter_update(sim, k): Updates parameters using minibatch gradient descent.
+                Args:
+                    sim: Simulation or optimization state object containing current parameters and gradients.
+                    k (int): Current iteration or step index.
+                Returns:
+                    dict: Updated parameters and running gradient.
+            - parameter_init(sim): Initializes the running gradient accumulator.
+                Args:
+                    sim: Simulation or optimization state object.
+                Returns:
+                    dict: Initialized running gradient.
+    """
+
+    def parameter_update(sim:SimVar,k:int) -> dict:
+        """
+        Updates the parameters and running gradient for a simulation at each iteration.
+        This function checks if a batch update should be performed based on the current step `k` and the `batch_size`.
+        If the batch size is reached, it averages the accumulated gradients, resets the running gradient, and updates
+        the parameters using a gradient descent rule. Otherwise, it accumulates the gradient for the next batch update.
+        Args:
+            sim (SimVar): Simulation variable object containing current parameters, gradients, and running gradient.
+            k (int): Current iteration or step index.
+        Returns:
+            dict: A dictionary containing the updated parameters ('p') and the updated running gradient ('psi').
+        """
+        
+        # check if number of steps has been reached
+        if ca.fmod(k+1,batch_size) == 0:
+
+            # construct average gradient
+            j_p = (sim.psi['j_p'] + sim.j_p) / batch_size
+
+            # zero the running gradient
+            psi = {'j_p':ca.DM.zeros(*j_p.shape)}
+            
+            # run update
+            p = gd_rule_sat(p=sim.p,j_p=sim.j_p,k=k,rho=rho,eta=eta,log=log,clip=clip)
+
+        # else update gradient
+        else:
+            psi = sim.psi['j_p'] + sim.j_p
+            p = sim.p
+
+        return {'p':p,'psi':psi}
+    
+    def parameter_init(sim:SimVar) -> dict:
+        """
+        Initializes the parameter dictionary for the simulation.
+        Args:
+            sim (SimVar): An instance containing simulation variables, including the shape of 'j_p'.
+        Returns:
+            dict: A dictionary with a single key 'j_p', whose value is a CasADi DM zero matrix matching the shape of sim.j_p.
+        """
+        return {'j_p':ca.DM.zeros(*sim.p.shape)}
+
+    return parameter_update, parameter_init
 
 def average_gradient_descent(rho:float,eta:float,log:bool=True) -> Tuple[Callable, Callable]:
     """
@@ -365,6 +557,41 @@ def gd_rule(p:ca.DM,j_p:ca.DM,k:int,rho:float,eta:float,log:bool) -> ca.DM:
         ca.DM: Updated parameter vector after applying the gradient descent step.
     """
     return p - (rho*ca.log(k+2)/(k+1)**eta)*j_p if log else p - (rho/(k+1)**eta)*j_p
+
+def gd_rule_sat(p:ca.DM,j_p:ca.DM,k:int,rho:float,eta:float,log:bool,clip:float) -> ca.DM:
+    """
+    Applies a gradient descent update rule to the parameter vector.
+
+    Args:
+        p (ca.DM): Current parameter vector.
+        j_p (ca.DM): Gradient of the objective function with respect to the parameters.
+        k (int): Current iteration number (zero-based).
+        rho (float): Learning rate scaling factor.
+        eta (float): Exponent controlling the learning rate decay.
+        clip (float): Clips the norm of the gradient.
+        log (bool): If True, applies a logarithmic decay to the learning rate; otherwise, uses polynomial decay.
+
+    Returns:
+        ca.DM: Updated parameter vector after applying the gradient descent step.
+    """
+
+    # compute gradient norm
+    j_p_norm = ca.norm_2(j_p)
+
+    # check if gradient norm is not too large
+    if j_p_norm <= 1e5:
+
+        # scale gradient
+        j_p_scaled = clip * j_p / j_p_norm if j_p_norm > clip else j_p
+
+        # compute update
+        p_next = p - (rho*ca.log(k+1)/(k+1)**eta)*j_p_scaled if log else p - (rho/(k+1)**eta)*j_p_scaled
+
+    # otherwise, do not update
+    else:
+        p_next = p
+
+    return p_next
 
 def adam_rule(
         p:ca.DM,

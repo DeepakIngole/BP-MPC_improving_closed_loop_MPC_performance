@@ -184,6 +184,9 @@ class UpperLevel:
         self._cost = None
         self._J_cost = None
         self._alg = None
+        self._j_cost_func_temp = None
+        self._get_cost_jacobian = None
+        self._get_cost_idx = None
 
     @typechecked
     def set_cost(
@@ -193,6 +196,7 @@ class UpperLevel:
             cst_viol:Optional[ca.SX]=None
         ) -> None:
         """
+        TODO: update this
         Set the cost function and its associated tracking and constraint violation costs for the upper-level optimization problem.
         This method performs several checks and setups:
         - Ensures that the tracking cost and constraint violation cost are compatible with the main cost function.
@@ -236,9 +240,17 @@ class UpperLevel:
         
         # extract upper-level parameters
         p_cl, x_cl, u_cl, y_cl = self.param['p'], self.param['x_cl'], self.param['u_cl'], self.param['y_cl']
-        
-        # check if cost contains variables that are not p_cl,x_cl,u_cl,y_cl
-        assert len(set(symvar_str(cost)) - set(symvar_str(ca.vcat([p_cl,ca.vec(x_cl),ca.vec(u_cl),ca.vec(y_cl)])))) == 0, 'Cost contains variables that are not p,x_cl,u_cl,y_cl.'
+        cl_vars = [p_cl,ca.vec(x_cl),ca.vec(u_cl),ca.vec(y_cl)]
+        cl_vars_names = ['p','x','u','y']
+
+        # check if sys id parameters are present
+        param_keys = list(self.param.keys())
+        psi_list = [ca.vec(self.param[elem]) for elem in param_keys if elem.startswith('psi_cl_')]
+        psi_names = [elem.split('psi_cl_')[1] for elem in param_keys if elem.startswith('psi_cl_')]
+        psi = [ca.vcat(psi_list)]
+
+        # check if cost contains variables that are not p_cl,x_cl,u_cl,y_cl,psi
+        assert len(set(symvar_str(cost)) - set(symvar_str(ca.vcat(cl_vars + psi)))) == 0, 'Cost contains variables that are not p,x_cl,u_cl,y_cl,psi.'
 
         # get number of parameters that are being differentiated
         n_p = self.dim['p']
@@ -255,17 +267,13 @@ class UpperLevel:
         j_cost = []
         
         # loop through all possible parameters that can enter the cost
-        for param, jac_name in zip([x_cl,u_cl,y_cl,p_cl],['J_x_p','J_u_p','J_y_p','J_p_p']):
+        for param, name in zip(cl_vars+psi,cl_vars_names+['psi']):
         
             # check if parameter enters the cost
             param_cost_idx = np.array(ca.DM(ca.sum1(ca.jacobian(ca.vcat(ca.symvar(cost)),ca.vec(param)))).T).nonzero()[0]
 
-            # # this one works with MX variables
-            # if 'x_cl' in symvar_str(cost):
-            #     x_cl_cost_idx = np.arange(0,ca.vec(x_cl).shape[0])
-            # else:
-            #     x_cl_cost_idx = []
-            # pass
+            # give a name to the jacobian
+            jac_name = 'J_' + name + '_p'
 
             # if so, get parameters entering the cost
             if len(param_cost_idx) > 0:
@@ -293,51 +301,65 @@ class UpperLevel:
 
                 # add a None to the parameter list
                 param_in.append(None)
+                param_idx.append(None)
 
         # assign Jacobians
-        j_x_p, j_u_p, j_y_p, _ = j_param
-        j_cost_x, j_cost_u, j_cost_y, j_cost_p = j_cost
+        if len(psi_names) > 0 and param_idx[-1] is not None:
+            _, j_x_p, j_u_p, j_y_p, _ = j_param
+            j_cost_p, j_cost_x, j_cost_u, j_cost_y, _ = j_cost
+            psi_needed = True
+        else:
+            j_x_p, j_u_p, j_y_p = j_param[1:4]
+            j_cost_p, j_cost_x, j_cost_u, j_cost_y = j_cost[0:4]
+            psi_needed = False
 
         # create function that retrieves only the indices that enter the cost given
         # the full vectors
-        def get_cost_idx(x,u,y,p):
+        def get_cost_idx(sim):
 
-            # get input list
-            inputs = [x,u,y,p]
+            if psi_needed:
+                # gather psi
+                psi_local = ca.vcat([ca.vec(sim.psi[key]) for key in psi_names])
+
+                # get input list
+                inputs = [sim.p,sim.x,sim.u,sim.y,psi_local]
+            else:
+                # get input list without psi
+                inputs = [sim.p,sim.x,sim.u,sim.y]
             
             # initialize output list
             out = []
 
             # loop through all parameters
-            for i in range(len(inputs)):
+            for elem,is_needed,idx in zip(inputs,param_in,param_idx):
 
                 # check if the parameter is empty
-                if param_in[i] is not None:
+                if is_needed is not None:
 
                     # extract the relevant indices
-                    out.append(ca.vec(inputs[i])[param_idx[i]])
+                    out.append(ca.vec(elem)[idx])
 
             # return as list
             return ca.vcat(out)
         
         # create function that retrieves the Jacobian that are needed to compute the
         # full jacobian of the cost function, given the full jacobian
-        def get_cost_jacobian(j_x,j_u,j_y):
+        def get_cost_jacobian(sim):
 
             # get input list
-            inputs = [j_x,j_u,j_y]
+            inputs = [sim.j_x,sim.j_u,sim.j_y]
 
             # initialize output list
             out = []
 
             # loop through all parameters
-            for i in range(len(inputs)):
+            for elem,is_needed,idx in zip(inputs,param_in[1:],param_idx[1:]):
 
                 # check if the parameter is empty
-                if param_in[i] is not None:
+                if is_needed is not None:
 
                     # extract the relevant Jacobian
-                    out.append(inputs[i][param_idx[i],:])
+                    out.append(elem[idx,:])
 
                     # TODO: I think this fails if the parameter is a scalar
 
@@ -353,19 +375,22 @@ class UpperLevel:
         cost_in = ca.vcat([ca.vec(item) for item in param_in if item is not None])
 
         # quick test to see if things are working
-        assert ca.sum1(get_cost_idx(x_cl,u_cl,y_cl,p_cl) - cost_in) == 0, 'Error in getCostIdx function.'
+        # assert ca.sum1(get_cost_idx(x_cl,u_cl,y_cl,p_cl) - cost_in) == 0, 'Error in getCostIdx function.'
 
         # create cost functions in two steps
         cost_func_temp = ca.Function('cost',[cost_in],[cost,track_cost,cst_viol])
         def cost_func(s):
             # return cost_func_temp(getCostIdx(S.x,S.u,S.y,S.p[:,-1]))
-            return cost_func_temp(get_cost_idx(s.x,s.u,s.y,s.p))
+            return cost_func_temp(get_cost_idx(s))
 
         # store in upper level
         self._cost = cost_func
 
         # create full jacobian functions in two steps
-        j_cost = j_cost_p + j_cost_x@j_x_p + j_cost_u@j_u_p + j_cost_y@j_y_p
+        if param_idx[0] is not None:
+            j_cost = j_cost_p@ca.SX.eye(self.dim['p'])[param_idx[0],:] + j_cost_x@j_x_p + j_cost_u@j_u_p + j_cost_y@j_y_p
+        else:
+            j_cost = j_cost_p + j_cost_x@j_x_p + j_cost_u@j_u_p + j_cost_y@j_y_p
         j_cost_func_temp = ca.Function('J_cost',[cost_in,j_x_p,j_u_p,j_y_p],[j_cost.T])
 
         # save indices
@@ -378,10 +403,10 @@ class UpperLevel:
         def j_cost_func(s):
 
             # get true input cost
-            cost_in_loc = get_cost_idx(s.x,s.u,s.y,s.p)
+            cost_in_loc = get_cost_idx(s)
 
             # get true Jacobian
-            j_x,j_u,j_y = get_cost_jacobian(s.j_x,s.j_u,s.j_y)
+            j_x,j_u,j_y = get_cost_jacobian(s)
 
             return j_cost_func_temp(cost_in_loc,j_x,j_u,j_y)
         
@@ -408,6 +433,24 @@ class UpperLevel:
         self._parameter_update = parameter_update
         self._sys_id_update = sys_id_update if sys_id_update is not None else None
         self._sys_id_init = sys_id_init if sys_id_init is not None else None
+
+        # check if psi is passed in sys_id_init or parameter_init
+        use_psi = sys_id_init is not None
+
+        # if psi variables are present they must be added to the symbolic variables in upper_level
+        if use_psi:
+
+            # get psi
+            psi = sys_id_init()
+
+            # loop through all variables
+            for key,val in psi.items():
+                
+                # name of variable is psi_cl_ + name of the key in psi
+                var_name = 'psi_cl_' + key
+
+                # add symbolic variable
+                self._sym.add_var(var_name, ca.SX.sym(var_name,*val.shape))
     
     @property
     def parameter_init(self):
