@@ -104,6 +104,9 @@ def quad_cost_2_param(Q):
 
 def dare2param(A,B,Q,R):
 
+    # convert to DM
+    A, B, Q, R = ca.DM(A), ca.DM(B), ca.DM(Q), ca.DM(R)
+
     # imports
     from scipy.linalg import solve_discrete_are as dare
     from scipy.linalg import cholesky

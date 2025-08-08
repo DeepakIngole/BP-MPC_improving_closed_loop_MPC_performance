@@ -15,7 +15,7 @@ def dynamics(uncertainty:Union[ca.SX,ca.DM]=ca.SX.zeros(8)) -> dict:
     x = ca.SX.sym('x0',n_x,1)
     u = ca.SX.sym('u0',n_u,1)
     theta = ca.SX.sym('theta',n_theta,1)
-    w = ca.SX.sym('w',n_w,2)
+    w = ca.SX.sym('w',n_w,1)
 
     # exact parameters
     c_f, c_r, m, v_x, l_f, l_r, i_z = 155494.663, 155494.663, 1140.0, 5.0, 1.165, 1.165, 1436.24

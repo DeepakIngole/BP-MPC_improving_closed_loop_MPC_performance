@@ -36,8 +36,10 @@ n_x, n_u, n_w, n_theta = dyn.dim['x'], dyn.dim['u'], dyn.dim['w'], dyn.dim['thet
 # upper-level horizon
 upper_horizon = 170
 
-# set initial conditions
+# initial error is zero
 x0 = ca.DM(n_x,1)
+
+# disturbance is the path curvature
 w0 = ca.horzsplit(ca.DM(n_w,upper_horizon))
 
 
@@ -102,11 +104,12 @@ MPC = QP(ingredients=ing, p=p, pf=pf)
 upper_level = UpperLevel(p=p, pf=pf, horizon=upper_horizon, mpc=MPC)
 
 # extract linearized dynamics at the origin
-A = dyn.A_nom(ca.DM(n_x,1),ca.DM(n_u,1))
-B = dyn.B_nom(ca.DM(n_x,1),ca.DM(n_u,1))
+A = dyn.A_nom(ca.DM(n_x,1),ca.DM(n_u,1),nominal_theta)
+B = dyn.B_nom(ca.DM(n_x,1),ca.DM(n_u,1),nominal_theta)
 
 # compute terminal cost initialization
 p_init = ca.vertcat(dare2param(A,B,Q_true,R_true),1e-3)
+pf_init = nominal_theta
 
 # extract closed-loop variables for upper level
 x_cl = ca.vec(upper_level.param['x_cl'])
@@ -132,10 +135,9 @@ k = upper_level.param['k']
 
 # create update function
 upper_level.set_alg(*gradient_descent(rho=0.0001,eta=0.51,log=True))
-# upper_level.set_alg(*minibatch_descent(rho=0.0001,eta=0.51,log=True,batch_size=2))
 
 # test derivatives
-# # out = tests.derivatives(mod)
+# out = tests.derivatives(mod)
 
 
 ### CREATE SCENARIO -----------------------------------------------------------
@@ -143,7 +145,7 @@ upper_level.set_alg(*gradient_descent(rho=0.0001,eta=0.51,log=True))
 scenario = Scenario(dyn,MPC,upper_level)
 
 # initialize
-init_dict = {'p':p_init,'x': x0, 'w': w0}
+init_dict = {'p':p_init, 'pf':pf_init, 'x': x0, 'w': w0}
 scenario.set_init(init_dict)
 
 # simulate with initial parameter
