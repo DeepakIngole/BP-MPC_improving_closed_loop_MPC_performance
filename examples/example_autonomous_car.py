@@ -22,7 +22,7 @@ from utils.parameter_update import gradient_descent, minibatch_descent
 cleanup()
 
 # choose relative uncertainty on model
-UNCERTAINTY_RANGE = 0.2
+UNCERTAINTY_RANGE = 0
 
 # create dictionary with parameters of cart pendulum
 dyn_dict, true_theta, nominal_theta = autonomous_car.dynamics(uncertainty=ca.DM(np.random.rand(8)*UNCERTAINTY_RANGE*2)-ca.DM.ones(8)*UNCERTAINTY_RANGE)
@@ -136,9 +136,6 @@ k = upper_level.param['k']
 # create update function
 upper_level.set_alg(*gradient_descent(rho=0.0001,eta=0.51,log=True))
 
-# test derivatives
-# out = tests.derivatives(mod)
-
 
 ### CREATE SCENARIO -----------------------------------------------------------
 
@@ -153,3 +150,26 @@ S,qp_data_sparse,_ = scenario.simulate()
 
 # create plot but do not show
 Plotter.plotTrajectory(S,options={'x':[0,1,2,3],'x_legend':['Position untrained','Velocity untrained','Angle untrained','Angular velocity untrained'],'u':[0],'u_legend':['Force untrained'],'color':'blue'},show=False)
+
+# test closed loop
+SIM,_,p_best,_ = scenario.closed_loop(options={'max_k':5})
+
+# get last value of p
+p_final = SIM[-1].p
+
+# create plots
+Plotter.plotTrajectory(SIM[-1],options={'x':[0,1,2,3],'x_legend':['Position tuned','Velocity tuned','Angle tuned','Angular velocity tuned'],'u':[0],'u_legend':['Force tuned'],'color':'red'},show=False)
+
+# create nonlinear solver
+NLP = scenario.make_trajectory_opt(theta=ca.DM(true_theta))
+
+# create warm start trajectories
+x_warm = SIM[-1].x
+u_warm = SIM[-1].u
+
+# solve
+nlp_out,nlp_solved = NLP(x0,x_warm,u_warm)
+print('NLP solved correctly') if nlp_solved else print('NLP failed')
+
+# plot best solution
+Plotter.plotTrajectory(nlp_out,options={'x':[0,1,2,3],'x_legend':['Position best','Velocity best','Angle best','Angular velocity best'],'u':[0],'u_legend':['Force best'],'color':'orange'},show=True)

@@ -1,6 +1,6 @@
 import casadi as ca
 from typing import Union
-from scipy.linalg import expm
+# from scipy.linalg import expm
 import numpy as np
 
 def dynamics(uncertainty:Union[ca.SX,ca.DM]=ca.SX.zeros(8)) -> dict:
