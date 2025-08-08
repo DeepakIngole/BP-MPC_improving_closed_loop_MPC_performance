@@ -22,7 +22,7 @@ from utils.parameter_update import gradient_descent, minibatch_descent
 cleanup()
 
 # choose relative uncertainty on model
-UNCERTAINTY_RANGE = 0
+UNCERTAINTY_RANGE = 0.2
 
 # create dictionary with parameters of cart pendulum
 dyn_dict, true_theta, nominal_theta = autonomous_car.dynamics(uncertainty=ca.DM(np.random.rand(8)*UNCERTAINTY_RANGE*2)-ca.DM.ones(8)*UNCERTAINTY_RANGE)

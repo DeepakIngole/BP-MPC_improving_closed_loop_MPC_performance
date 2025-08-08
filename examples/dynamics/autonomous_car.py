@@ -61,10 +61,13 @@ def dynamics(uncertainty:Union[ca.SX,ca.DM]=ca.SX.zeros(8)) -> dict:
     w_mat[3,1] = 1
 
     # exact discretization
-    a_mat_disc = ca.DM(expm(a_mat*delta_t))
-    temp_mat = ca.SX(ca.solve(a_mat, a_mat_disc - ca.SX.eye(n_x)))
-    b_mat_disc = temp_mat @ b_mat
-    w_mat_disc = temp_mat @ w_mat
+    # a_mat_disc = ca.DM(expm(a_mat*delta_t))
+    # temp_mat = ca.SX(ca.solve(ca.DM(a_mat), a_mat_disc - ca.DM.eye(n_x)))
+    # b_mat_disc = temp_mat @ b_mat
+    # w_mat_disc = temp_mat @ w_mat
+    a_mat_disc = a_mat*delta_t + ca.SX.eye(n_x)
+    b_mat_disc = b_mat*delta_t
+    w_mat_disc = w_mat*delta_t
 
     # Euler discretization for nominal model
     a_mat_disc_nom = a_mat_nom*delta_t + ca.SX.eye(n_x)
