@@ -149,7 +149,7 @@ class Scenario:
     def trajectory_opt(self):
         return self._trajectory_opt
     
-    def make_trajectory_opt(self,theta=None):
+    def make_trajectory_opt(self,theta=None,w=None):
         # TODO: type check and better description
         """
         Creates and returns an optimal control trajectory solver for the system.
@@ -160,6 +160,7 @@ class Scenario:
         Args:
             theta (optional): Parameters for the system dynamics. If provided, the nominal
                 dynamics function is parameterized by `theta`. Default is None.
+            w (optional): disturbance vector. Default is None.
         Returns:
             solver (function): A function that solves the optimal control problem.
                 The solver has the following signature:
@@ -179,10 +180,11 @@ class Scenario:
         """
   
         # extract system dynamics
-        if theta is not None:
-            f = lambda x,u: self.dyn.f_nom(x,u,theta)
+        if w is None:
+            f = lambda x,u: self.dyn.f_nom(x,u,theta) if theta is not None else self.dyn.f_nom
         else:
-            f = self.dyn.f_nom
+            assert theta is None, 'You cannot pass theta and w at the same time.'
+            f = self.dyn.f
 
         # extract dimensions
         n = self.dim
@@ -204,7 +206,7 @@ class Scenario:
         for t in range(1,n['T']+1):
         
             # dynamics
-            opti.subject_to( x[:,t] == f(x[:,t-1],u[:,t-1]) )
+            opti.subject_to( x[:,t] == f(x[:,t-1],u[:,t-1]) ) if w is None else opti.subject_to( x[:,t] == f(x[:,t-1],u[:,t-1],w[t-1]) )
 
         # to get cost, create fake simVar and pass it through the cost function
         s = SimVar(n)
