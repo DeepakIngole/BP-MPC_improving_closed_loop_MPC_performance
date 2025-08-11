@@ -1,7 +1,8 @@
 import casadi as ca
 from typing import Union
-# from scipy.linalg import expm
 import numpy as np
+from scipy.interpolate import splprep, splev, interp1d
+from scipy.integrate import cumulative_trapezoid
 
 def dynamics(uncertainty:Union[ca.SX,ca.DM]=ca.SX.zeros(8)) -> dict:
 
@@ -99,3 +100,54 @@ def dynamics(uncertainty:Union[ca.SX,ca.DM]=ca.SX.zeros(8)) -> dict:
         assert ca.mmax(ca.fabs(ca.DM(error_should_not_be_zero))) > 0, 'Nominal theta is not correct.'
 
     return out, true_theta, nominal_theta
+
+def generate_waypoints(waypoints,velocity,sampling_time):
+    
+    # extract waypoints
+    x = np.asarray(waypoints[0]).ravel()
+    y = np.asarray(waypoints[1]).ravel()
+
+    # chord-length parameter (helps stability)
+    u_data = np.r_[0.0, np.cumsum(np.hypot(np.diff(x), np.diff(y)))]
+    u_data /= u_data[-1]
+
+    # parametric B-spline: x(u), y(u).
+    # s=0 for interpolation without smoothing.
+    # per=1 because the path is a closed loop.
+    tck, _ = splprep([x, y], s=0, k=3, per=0)
+
+    # dense parameter grid to compute arc length along the spline
+    u_dense = np.linspace(0.0, 1.0, 1000000)
+    dx_du, dy_du = splev(u_dense, tck, der=1)
+    speed_u = np.hypot(dx_du, dy_du)           # ds/du
+
+    # s(u): cumulative arc length along the spline (true, not polyline)
+    s_of_u = np.concatenate(([0.0], cumulative_trapezoid(speed_u, u_dense)))
+    L = s_of_u[-1]                              # total length
+
+    # make s strictly increasing (defensive; handles any flat spots)
+    mask = np.r_[True, np.diff(s_of_u) > 1e-12]
+    u_mon = u_dense[mask]
+    s_mon = s_of_u[mask]
+
+    # invert: u(s)
+    u_of_s = interp1d(s_mon, u_mon, kind='linear', assume_sorted=True)
+
+    # sample at constant speed v with sampling time dt
+    ds = velocity * sampling_time
+    s_samples = np.arange(0.0, L + 1e-12, ds)
+
+    u_samples = u_of_s(s_samples)
+    x_samples, y_samples = splev(u_samples, tck)
+
+    # construct output waypoints
+    waypoints_interpolated = np.vstack((x_samples,y_samples))
+
+    # (optional) heading and curvature at the samples
+    dx_du_s, dy_du_s   = splev(u_samples, tck, der=1)
+    d2x_du2_s, d2y_du2_s = splev(u_samples, tck, der=2)
+
+    theta  = np.arctan2(dy_du_s, dx_du_s)  # tangent direction (parameterization-invariant)
+    kappa  = (dx_du_s*d2y_du2_s - dy_du_s*d2x_du2_s) / (dx_du_s**2 + dy_du_s**2)**1.5  # path curvature
+
+    return waypoints_interpolated, kappa, theta

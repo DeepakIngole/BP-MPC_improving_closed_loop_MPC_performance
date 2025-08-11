@@ -18,6 +18,21 @@ from src.upper_level import UpperLevel
 import numpy as np
 from utils.parameter_update import gradient_descent, minibatch_descent
 
+rng = np.random.default_rng()
+x = np.arange(0, 2*np.pi+np.pi/4, 2*np.pi/16)
+
+waypoints = (x, np.sin(x) + 0.4*rng.standard_normal(size=len(x)))
+
+x,y,xnew,spl = autonomous_car.generate_waypoints(waypoints=waypoints)
+
+import matplotlib.pyplot as plt
+
+plt.plot(xnew, spl(xnew), '-.')
+plt.plot(x, y, 'o')
+plt.show()
+
+raise Exception
+
 # cleanup jit files
 cleanup()
 
@@ -34,7 +49,7 @@ dyn = Dynamics(dyn_dict)
 n_x, n_u, n_w, n_theta = dyn.dim['x'], dyn.dim['u'], dyn.dim['w'], dyn.dim['theta']
 
 # upper-level horizon
-upper_horizon = 170
+upper_horizon = 200
 
 # initial error is zero
 x0 = ca.DM(n_x,1)
