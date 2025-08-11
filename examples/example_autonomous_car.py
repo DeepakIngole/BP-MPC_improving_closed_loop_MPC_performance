@@ -18,17 +18,18 @@ from src.upper_level import UpperLevel
 import numpy as np
 from utils.parameter_update import gradient_descent, minibatch_descent
 
-rng = np.random.default_rng()
-x = np.arange(0, 2*np.pi+np.pi/4, 2*np.pi/16)
+# determine waypoints
+width = 50
+waypoints = np.hsplit(np.array([[-4,-4],[0,-4],[4,-4],[4,0],[4,4],[0,4],[-4,4],[-4,2],[2,2],[2,-2],[0,-2],[-2,-2],[-2,0],[-4,0],[-4,-2],[-4,-4]]) / 4.0 * width, 2)
 
-waypoints = (x, np.sin(x) + 0.4*rng.standard_normal(size=len(x)))
-
-x,y,xnew,spl = autonomous_car.generate_waypoints(waypoints=waypoints)
+# run interpolation
+waypoints_interpolated, kappa, theta = autonomous_car.generate_waypoints(waypoints=waypoints)
 
 import matplotlib.pyplot as plt
 
-plt.plot(xnew, spl(xnew), '-.')
-plt.plot(x, y, 'o')
+# plot to verify
+plt.plot(waypoints_interpolated[0,:], waypoints_interpolated[1,:], '-.')
+plt.plot(waypoints[0], waypoints[1], 'o')
 plt.show()
 
 raise Exception

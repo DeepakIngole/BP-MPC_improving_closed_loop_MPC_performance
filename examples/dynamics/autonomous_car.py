@@ -101,7 +101,7 @@ def dynamics(uncertainty:Union[ca.SX,ca.DM]=ca.SX.zeros(8)) -> dict:
 
     return out, true_theta, nominal_theta
 
-def generate_waypoints(waypoints,velocity,sampling_time):
+def generate_waypoints(waypoints,velocity:float=5.0,sampling_time:float=0.05):
     
     # extract waypoints
     x = np.asarray(waypoints[0]).ravel()
@@ -114,7 +114,7 @@ def generate_waypoints(waypoints,velocity,sampling_time):
     # parametric B-spline: x(u), y(u).
     # s=0 for interpolation without smoothing.
     # per=1 because the path is a closed loop.
-    tck, _ = splprep([x, y], s=0, k=3, per=0)
+    tck, _ = splprep([x, y], s=0, k=2, per=0)
 
     # dense parameter grid to compute arc length along the spline
     u_dense = np.linspace(0.0, 1.0, 1000000)
