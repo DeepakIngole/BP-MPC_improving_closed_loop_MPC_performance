@@ -107,10 +107,6 @@ def generate_waypoints(waypoints,velocity:float=5.0,sampling_time:float=0.05):
     x = np.asarray(waypoints[0]).ravel()
     y = np.asarray(waypoints[1]).ravel()
 
-    # chord-length parameter (helps stability)
-    u_data = np.r_[0.0, np.cumsum(np.hypot(np.diff(x), np.diff(y)))]
-    u_data /= u_data[-1]
-
     # parametric B-spline: x(u), y(u).
     # s=0 for interpolation without smoothing.
     # per=1 because the path is a closed loop.
@@ -147,7 +143,7 @@ def generate_waypoints(waypoints,velocity:float=5.0,sampling_time:float=0.05):
     dx_du_s, dy_du_s   = splev(u_samples, tck, der=1)
     d2x_du2_s, d2y_du2_s = splev(u_samples, tck, der=2)
 
-    theta  = np.arctan2(dy_du_s, dx_du_s)  # tangent direction (parameterization-invariant)
+    # theta  = np.arctan2(dy_du_s, dx_du_s)  # tangent direction (parameterization-invariant)
     kappa  = (dx_du_s*d2y_du2_s - dy_du_s*d2x_du2_s) / (dx_du_s**2 + dy_du_s**2)**1.5  # path curvature
 
     r_s = velocity * kappa

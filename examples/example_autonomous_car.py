@@ -32,7 +32,7 @@ VELOCITY = 4.0
 N_MODELS = 1
 
 # max iteration number
-ITERATIONS = 100
+ITERATIONS = 50
 
 # radius of uncertainty ball
 BALL_RADIUS = 0.5
@@ -55,7 +55,7 @@ waypoints_interpolated, r_s = autonomous_car.generate_waypoints(waypoints=WAYPOI
 # # plot to verify
 # import matplotlib.pyplot as plt
 # plt.plot(waypoints_interpolated[0,:], waypoints_interpolated[1,:], '-.')
-# plt.plot(waypoints[0], waypoints[1], 'o')
+# plt.plot(WAYPOINTS[0], WAYPOINTS[1], 'o')
 # plt.show()
 # raise Exception
 
