@@ -10,7 +10,7 @@ def dynamics(uncertainty:Union[ca.SX,ca.DM]=ca.SX.zeros(8)) -> dict:
     n_x = 4               # number of states
     n_u = 1               # number of inputs
     n_theta = 8           # number of unknown parameters
-    n_w = 2               # number of disturbances
+    n_w = 1               # number of disturbances
 
     # define symbolic variables
     x = ca.SX.sym('x0',n_x,1)
@@ -58,8 +58,8 @@ def dynamics(uncertainty:Union[ca.SX,ca.DM]=ca.SX.zeros(8)) -> dict:
 
     # true disturbance matrix
     w_mat = ca.SX(n_x,n_w)
-    w_mat[1,0] = 1
-    w_mat[3,1] = 1
+    w_mat[1,0] = (l_r*c_r - l_f*c_f) / (m*v_x) - v_x
+    w_mat[3,0] = - (l_f**2*c_f+l_r**2*c_r) / (i_z*v_x)
 
     # exact discretization
     # a_mat_disc = ca.DM(expm(a_mat*delta_t))
@@ -75,10 +75,10 @@ def dynamics(uncertainty:Union[ca.SX,ca.DM]=ca.SX.zeros(8)) -> dict:
     b_mat_disc_nom = b_mat_nom*delta_t
 
     # compute next state symbolically
-    x_next = ca.SX(a_mat_disc) @ x + b_mat_disc @ u + w_mat_disc @ w
+    x_next = ca.SX(a_mat_disc) @ x + b_mat_disc * u + w_mat_disc * w
 
     # create nominal model
-    x_next_nom = a_mat_disc_nom @ x + b_mat_disc_nom @ u
+    x_next_nom = a_mat_disc_nom @ x + b_mat_disc_nom * u
 
     # construct nominal theta
     true_theta = ca.vertcat(a_mat[1,1:4], a_mat[3,1:4], b_mat[1,0], b_mat[3,0])
@@ -150,4 +150,6 @@ def generate_waypoints(waypoints,velocity:float=5.0,sampling_time:float=0.05):
     theta  = np.arctan2(dy_du_s, dx_du_s)  # tangent direction (parameterization-invariant)
     kappa  = (dx_du_s*d2y_du2_s - dy_du_s*d2x_du2_s) / (dx_du_s**2 + dy_du_s**2)**1.5  # path curvature
 
-    return waypoints_interpolated, kappa, theta
+    r_s = velocity * kappa
+
+    return waypoints_interpolated, r_s

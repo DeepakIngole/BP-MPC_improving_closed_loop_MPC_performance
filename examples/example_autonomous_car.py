@@ -18,27 +18,14 @@ from src.upper_level import UpperLevel
 import numpy as np
 from utils.parameter_update import gradient_descent, minibatch_descent
 
-# determine waypoints
-width = 50
-waypoints = np.hsplit(np.array([[-4,-4],[0,-4],[4,-4],[4,0],[4,4],[0,4],[-4,4],[-4,2],[2,2],[2,-2],[0,-2],[-2,-2],[-2,0],[-4,0],[-4,-2],[-4,-4]]) / 4.0 * width, 2)
-
-# run interpolation
-waypoints_interpolated, kappa, theta = autonomous_car.generate_waypoints(waypoints=waypoints)
-
-import matplotlib.pyplot as plt
-
-# plot to verify
-plt.plot(waypoints_interpolated[0,:], waypoints_interpolated[1,:], '-.')
-plt.plot(waypoints[0], waypoints[1], 'o')
-plt.show()
-
-raise Exception
-
 # cleanup jit files
 cleanup()
 
 # choose relative uncertainty on model
 UNCERTAINTY_RANGE = 0
+
+# choose waypoints
+WAYPOINTS = np.hsplit(np.array([[-4,-4],[0,-4],[4,-4],[4,0],[4,4],[0,4],[-4,4],[-4,2],[2,2],[2,-2],[0,-2],[-2,-2],[-2,0],[-4,0],[-4,-2],[-4,-4]]) / 4.0 * 10, 2)
 
 # create dictionary with parameters of cart pendulum
 dyn_dict, true_theta, nominal_theta = autonomous_car.dynamics(uncertainty=ca.DM(np.random.rand(8)*UNCERTAINTY_RANGE*2)-ca.DM.ones(8)*UNCERTAINTY_RANGE)
@@ -49,14 +36,24 @@ dyn = Dynamics(dyn_dict)
 # get state and input dimensions
 n_x, n_u, n_w, n_theta = dyn.dim['x'], dyn.dim['u'], dyn.dim['w'], dyn.dim['theta']
 
-# upper-level horizon
-upper_horizon = 200
+# run interpolation
+waypoints_interpolated, r_s = autonomous_car.generate_waypoints(waypoints=WAYPOINTS)
+
+# # plot to verify
+# import matplotlib.pyplot as plt
+# plt.plot(waypoints_interpolated[0,:], waypoints_interpolated[1,:], '-.')
+# plt.plot(waypoints[0], waypoints[1], 'o')
+# plt.show()
+# raise Exception
 
 # initial error is zero
 x0 = ca.DM(n_x,1)
 
 # disturbance is the path curvature
-w0 = ca.horzsplit(ca.DM(n_w,upper_horizon))
+w0 = ca.vertsplit(ca.DM(r_s))
+
+# upper-level horizon
+upper_horizon = len(w0)
 
 
 ### CREATE MPC -----------------------------------------------------------------------------
