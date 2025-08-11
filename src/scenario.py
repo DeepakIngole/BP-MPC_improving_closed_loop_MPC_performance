@@ -316,10 +316,10 @@ class Scenario:
         def j_cost_func(s):
 
             # get true input cost
-            cost_in_loc = self.upper_level._get_cost_idx(s.x,s.u,s.y,s.p)
+            cost_in_loc = self.upper_level._get_cost_idx(s)
 
             # get true Jacobian
-            j_x,j_u,j_y = self.upper_level._get_cost_jacobian(s.j_x,s.j_u,s.j_y)
+            j_x,j_u,j_y = self.upper_level._get_cost_jacobian(s)
 
             return j_cost_func_temp_mapped(cost_in_loc,j_x,j_u,j_y)
 

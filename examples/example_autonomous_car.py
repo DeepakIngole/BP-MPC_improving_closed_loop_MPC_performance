@@ -16,7 +16,8 @@ import casadi as ca
 from src.plotter import Plotter
 from src.upper_level import UpperLevel
 import numpy as np
-from utils.parameter_update import gradient_descent, minibatch_descent, adam
+from utils.parameter_update import gradient_descent, minibatch_descent, adam, robust_gradient_descent
+from utils.sample_utils import sample_unit_ball
 
 # cleanup jit files
 cleanup()
@@ -26,6 +27,15 @@ UNCERTAINTY_RANGE = 0
 
 # choose constant velocity
 VELOCITY = 4.0
+
+# number of parallel models
+N_MODELS = 1
+
+# max iteration number
+ITERATIONS = 100
+
+# radius of uncertainty ball
+BALL_RADIUS = 0.5
 
 # choose waypoints
 WAYPOINTS = np.hsplit(np.array([[-4,-4],[0,-4],[4,-4],[4,0],[4,4],[0,4],[-4,4],[-4,2],[2,2],[2,-2],[0,-2],[-2,-2],[-2,0],[-4,0],[-4,-2],[-4,-4]]) / 4.0 * 10, 2)
@@ -62,41 +72,43 @@ upper_horizon = len(w0)
 ### CREATE MPC -----------------------------------------------------------------------------
 
 # upper level cost
-Q_true = ca.diag(ca.vertcat(10,1,10,1))
+Q_true = ca.diag(ca.vertcat(10,1,1,1))
 R_true = 1e-6
 
 # mpc horizon
-mpc_horizon = 20
+mpc_horizon = 10
 
 # constraints are simple bounds on state and input
-x_max = ca.vertcat(4,20,1,2)
+x_max = ca.vertcat(4,20,1,2.5)
 x_min = -x_max
 u_max = ca.pi / 3
 u_min = -u_max
 
 # parameter = terminal state cost and input cost
-c_q = ca.SX.sym('c_q',int(n_x*(n_x+1)/2),1)
+c_q = ca.SX.sym('c_q',n_x,1)#ca.SX.sym('c_q',int(n_x*(n_x+1)/2),1)
+c_q_n = ca.SX.sym('c_q',int(n_x*(n_x+1)/2),1)
 c_r = ca.SX.sym('c_r',1,1)
 
 # stage cost (state)
-Qx = [Q_true] * (mpc_horizon-1)
+# Qx = [Q_true] * (mpc_horizon-1)
+Qx = [ca.diag(c_q)] * (mpc_horizon-1)
 
 # stage cost (input)
 Ru = c_r**2 + 1e-6
 
 # create parameters
-p = ca.vcat([c_q,c_r])
+p = ca.vcat([c_q,c_q_n,c_r])
 pf = dyn_dict['theta']
 
 # MPC terminal cost
-Qn = param2terminal_cost(c_q) + 0.01*ca.SX.eye(n_x)
+Qn = param2terminal_cost(c_q_n) + 0.01*ca.SX.eye(n_x)
 
 # append to Qx
 Qx.append(Qn)
 
 # slack penalties
 c_lin = 25
-c_quad = 50
+c_quad = 25
 
 # add to mpc dictionary
 cost = {'Qx': Qx, 'Ru':Ru}
@@ -124,7 +136,7 @@ A = dyn.A_nom(ca.DM(n_x,1),ca.DM(n_u,1),nominal_theta)
 B = dyn.B_nom(ca.DM(n_x,1),ca.DM(n_u,1),nominal_theta)
 
 # compute terminal cost initialization
-p_init = ca.vertcat(dare2param(A,B,Q_true,R_true),1e-3)
+p_init = ca.vertcat(ca.diag(Q_true),dare2param(A,B,Q_true,R_true),1e-3)
 pf_init = nominal_theta
 
 # extract closed-loop variables for upper level
@@ -150,15 +162,30 @@ J_p = upper_level.param['J_p']
 k = upper_level.param['k']
 
 # create update function
-# upper_level.set_alg(*gradient_descent(rho=0.1,eta=0.51,log=True))
-upper_level.set_alg(*adam(alpha=0.15, beta_1=0.5, beta_2=0.8, epsilon=1e-6))
+if N_MODELS == 1:
+
+    # choose update algorithm
+    upper_level.set_alg(*gradient_descent(rho=0.01,eta=0.51,log=True))
+    # upper_level.set_alg(*adam(alpha=0.15, beta_1=0.5, beta_2=0.8, epsilon=1e-6))
+
+    # sample random models
+    theta0 = ca.horzsplit(ca.DM(nominal_theta + BALL_RADIUS * sample_unit_ball(n_theta, N_MODELS).T),1)
+
+else:
+    
+    # choose update algorithm
+    upper_level.set_alg(*robust_gradient_descent(rho=0.01, eta=0.51, n_models=N_MODELS, n_p=p.shape[0],log=True))
+
+    # initial model is the nominal model
+    theta0 = nominal_theta
+
 
 ### CREATE SCENARIO -----------------------------------------------------------
 
 scenario = Scenario(dyn,MPC,upper_level)
 
 # initialize
-init_dict = {'p':p_init, 'pf':pf_init, 'x': x0, 'w': w0}
+init_dict = {'p':p_init, 'pf':pf_init, 'x': x0, 'w': w0, 'theta':theta0}
 scenario.set_init(init_dict)
 
 # simulate with initial parameter
@@ -167,8 +194,13 @@ S,qp_data_sparse,_ = scenario.simulate()
 # create plot but do not show
 Plotter.plotTrajectory(S,options={'x':[0,1,2,3],'x_legend':['Position untrained','Velocity untrained','Angle untrained','Angular velocity untrained'],'u':[0],'u_legend':['Force untrained'],'color':'blue'},show=False)
 
+# simulation options
+sim_options = {'save_memory': True, 'use_true_model': False, 'max_k': ITERATIONS, 'true_theta': np.array(ca.DM(true_theta))}
+if N_MODELS > 1:
+    sim_options['simulate_parallel_models'] = True
+
 # test closed loop
-SIM,_,p_best,_ = scenario.closed_loop(options={'max_k':100})
+SIM,_,p_best,_ = scenario.closed_loop(options=sim_options)
 
 # get last value of p
 p_final = SIM[-1].p
