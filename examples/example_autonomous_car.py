@@ -16,13 +16,16 @@ import casadi as ca
 from src.plotter import Plotter
 from src.upper_level import UpperLevel
 import numpy as np
-from utils.parameter_update import gradient_descent, minibatch_descent
+from utils.parameter_update import gradient_descent, minibatch_descent, adam
 
 # cleanup jit files
 cleanup()
 
 # choose relative uncertainty on model
 UNCERTAINTY_RANGE = 0
+
+# choose constant velocity
+VELOCITY = 4.0
 
 # choose waypoints
 WAYPOINTS = np.hsplit(np.array([[-4,-4],[0,-4],[4,-4],[4,0],[4,4],[0,4],[-4,4],[-4,2],[2,2],[2,-2],[0,-2],[-2,-2],[-2,0],[-4,0],[-4,-2],[-4,-4]]) / 4.0 * 10, 2)
@@ -37,7 +40,7 @@ dyn = Dynamics(dyn_dict)
 n_x, n_u, n_w, n_theta = dyn.dim['x'], dyn.dim['u'], dyn.dim['w'], dyn.dim['theta']
 
 # run interpolation
-waypoints_interpolated, r_s = autonomous_car.generate_waypoints(waypoints=WAYPOINTS)
+waypoints_interpolated, r_s = autonomous_car.generate_waypoints(waypoints=WAYPOINTS,velocity=VELOCITY)
 
 # # plot to verify
 # import matplotlib.pyplot as plt
@@ -66,9 +69,9 @@ R_true = 1e-6
 mpc_horizon = 20
 
 # constraints are simple bounds on state and input
-x_max = ca.vertcat(4,20,1,1)
+x_max = ca.vertcat(4,20,1,2)
 x_min = -x_max
-u_max = ca.pi / 4
+u_max = ca.pi / 3
 u_min = -u_max
 
 # parameter = terminal state cost and input cost
@@ -92,8 +95,8 @@ Qn = param2terminal_cost(c_q) + 0.01*ca.SX.eye(n_x)
 Qx.append(Qn)
 
 # slack penalties
-c_lin = 15
-c_quad = 5
+c_lin = 25
+c_quad = 50
 
 # add to mpc dictionary
 cost = {'Qx': Qx, 'Ru':Ru}
@@ -147,8 +150,8 @@ J_p = upper_level.param['J_p']
 k = upper_level.param['k']
 
 # create update function
-upper_level.set_alg(*gradient_descent(rho=0.0001,eta=0.51,log=True))
-
+# upper_level.set_alg(*gradient_descent(rho=0.1,eta=0.51,log=True))
+upper_level.set_alg(*adam(alpha=0.15, beta_1=0.5, beta_2=0.8, epsilon=1e-6))
 
 ### CREATE SCENARIO -----------------------------------------------------------
 
@@ -165,7 +168,7 @@ S,qp_data_sparse,_ = scenario.simulate()
 Plotter.plotTrajectory(S,options={'x':[0,1,2,3],'x_legend':['Position untrained','Velocity untrained','Angle untrained','Angular velocity untrained'],'u':[0],'u_legend':['Force untrained'],'color':'blue'},show=False)
 
 # test closed loop
-SIM,_,p_best,_ = scenario.closed_loop(options={'max_k':5})
+SIM,_,p_best,_ = scenario.closed_loop(options={'max_k':100})
 
 # get last value of p
 p_final = SIM[-1].p
@@ -174,7 +177,7 @@ p_final = SIM[-1].p
 Plotter.plotTrajectory(SIM[-1],options={'x':[0,1,2,3],'x_legend':['Position tuned','Velocity tuned','Angle tuned','Angular velocity tuned'],'u':[0],'u_legend':['Force tuned'],'color':'red'},show=False)
 
 # create nonlinear solver
-NLP = scenario.make_trajectory_opt(theta=ca.DM(true_theta))
+NLP = scenario.make_trajectory_opt(w=w0)
 
 # create warm start trajectories
 x_warm = SIM[-1].x
