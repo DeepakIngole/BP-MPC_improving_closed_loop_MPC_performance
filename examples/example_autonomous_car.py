@@ -23,10 +23,10 @@ from utils.sample_utils import sample_unit_ball
 cleanup()
 
 # choose relative uncertainty on model
-UNCERTAINTY_RANGE = 0
+UNCERTAINTY_RANGE = 0.3
 
 # choose constant velocity
-VELOCITY = 4.0
+VELOCITY = 5.0
 
 # number of parallel models
 N_MODELS = 1
@@ -37,11 +37,13 @@ ITERATIONS = 50
 # radius of uncertainty ball
 BALL_RADIUS = 0.5
 
+RHO = 0.005
+
 # choose waypoints
-WAYPOINTS = np.hsplit(np.array([[-4,-4],[0,-4],[4,-4],[4,0],[4,4],[0,4],[-4,4],[-4,2],[2,2],[2,-2],[0,-2],[-2,-2],[-2,0],[-4,0],[-4,-2],[-4,-4]]) / 4.0 * 10, 2)
+WAYPOINTS = np.hsplit(np.array([[-4,-4],[0,-4],[4,-4],[4,0],[4,4],[0,4],[-4,4],[-4,2],[2,2],[2,-2],[0,-2],[-2,-2],[-2,0],[-4,0],[-4,-2],[-4,-4]]) / 4.0 * 15, 2)
 
 # create dictionary with parameters of cart pendulum
-dyn_dict, true_theta, nominal_theta = autonomous_car.dynamics(uncertainty=ca.DM(np.random.rand(8)*UNCERTAINTY_RANGE*2)-ca.DM.ones(8)*UNCERTAINTY_RANGE)
+dyn_dict, true_theta, nominal_theta = autonomous_car.dynamics(uncertainty=ca.DM(np.random.rand(8)*UNCERTAINTY_RANGE*2)-ca.DM.ones(8)*UNCERTAINTY_RANGE,velocity=VELOCITY)
 
 # create dynamics object
 dyn = Dynamics(dyn_dict)
@@ -50,17 +52,10 @@ dyn = Dynamics(dyn_dict)
 n_x, n_u, n_w, n_theta = dyn.dim['x'], dyn.dim['u'], dyn.dim['w'], dyn.dim['theta']
 
 # run interpolation
-waypoints_interpolated, r_s = autonomous_car.generate_waypoints(waypoints=WAYPOINTS,velocity=VELOCITY)
-
-# # plot to verify
-# import matplotlib.pyplot as plt
-# plt.plot(waypoints_interpolated[0,:], waypoints_interpolated[1,:], '-.')
-# plt.plot(WAYPOINTS[0], WAYPOINTS[1], 'o')
-# plt.show()
-# raise Exception
+waypoints_interpolated, r_s, tangent_direction = autonomous_car.generate_waypoints(waypoints=WAYPOINTS,velocity=VELOCITY)
 
 # initial error is zero
-x0 = ca.DM(n_x,1)
+x0 = ca.vertcat(0.75,0,0,0)
 
 # disturbance is the path curvature
 w0 = ca.vertsplit(ca.DM(r_s))
@@ -72,16 +67,16 @@ upper_horizon = len(w0)
 ### CREATE MPC -----------------------------------------------------------------------------
 
 # upper level cost
-Q_true = ca.diag(ca.vertcat(10,1,1,1))
+Q_true = ca.diag(ca.vertcat(1,1,1,1))
 R_true = 1e-6
 
 # mpc horizon
-mpc_horizon = 10
+mpc_horizon = 5
 
 # constraints are simple bounds on state and input
-x_max = ca.vertcat(4,20,1,2.5)
+x_max = ca.vertcat(1,5,1,2.5)
 x_min = -x_max
-u_max = ca.pi / 3
+u_max = ca.pi / 5
 u_min = -u_max
 
 # parameter = terminal state cost and input cost
@@ -165,7 +160,7 @@ k = upper_level.param['k']
 if N_MODELS == 1:
 
     # choose update algorithm
-    upper_level.set_alg(*gradient_descent(rho=0.01,eta=0.51,log=True))
+    upper_level.set_alg(*gradient_descent(rho=RHO,eta=0.6,log=True))
     # upper_level.set_alg(*adam(alpha=0.15, beta_1=0.5, beta_2=0.8, epsilon=1e-6))
 
     # sample random models
@@ -189,10 +184,19 @@ init_dict = {'p':p_init, 'pf':pf_init, 'x': x0, 'w': w0, 'theta':theta0}
 scenario.set_init(init_dict)
 
 # simulate with initial parameter
-S,qp_data_sparse,_ = scenario.simulate()
+sim_0,qp_data_sparse,_ = scenario.simulate()
+
+Plotter.plot_car_trajectory(
+    waypoints=waypoints_interpolated,
+    tangent_direction=tangent_direction,
+    sim=sim_0,
+    path_constraint=1,
+    show=False,
+    options={'legend':'Untrained','color':'orange','linestyle':'-.'}
+)
 
 # create plot but do not show
-Plotter.plotTrajectory(S,options={'x':[0,1,2,3],'x_legend':['Position untrained','Velocity untrained','Angle untrained','Angular velocity untrained'],'u':[0],'u_legend':['Force untrained'],'color':'blue'},show=False)
+# Plotter.plot_trajectory(sim_0,options={'x':[0,1,2,3],'x_legend':['Position untrained','Velocity untrained','Angle untrained','Angular velocity untrained'],'u':[0],'u_legend':['Force untrained'],'color':'blue'},show=False)
 
 # simulation options
 sim_options = {'save_memory': True, 'use_true_model': False, 'max_k': ITERATIONS, 'true_theta': np.array(ca.DM(true_theta))}
@@ -200,24 +204,34 @@ if N_MODELS > 1:
     sim_options['simulate_parallel_models'] = True
 
 # test closed loop
-SIM,_,p_best,_ = scenario.closed_loop(options=sim_options)
+sim_list,_,p_best,_ = scenario.closed_loop(options=sim_options)
 
 # get last value of p
-p_final = SIM[-1].p
+p_final = sim_list[-1].p
 
 # create plots
-Plotter.plotTrajectory(SIM[-1],options={'x':[0,1,2,3],'x_legend':['Position tuned','Velocity tuned','Angle tuned','Angular velocity tuned'],'u':[0],'u_legend':['Force tuned'],'color':'red'},show=False)
+# Plotter.plot_trajectory(sim_list[-1],options={'x':[0,1,2,3],'x_legend':['Position tuned','Velocity tuned','Angle tuned','Angular velocity tuned'],'u':[0],'u_legend':['Force tuned'],'color':'red'},show=False)
+Plotter.plot_car_trajectory(
+    waypoints=waypoints_interpolated,
+    tangent_direction=tangent_direction,
+    sim=sim_list[-1],
+    path_constraint=1,
+    show=True,
+    options={'legend':'Trained','color':'red','linestyle':'--'}
+)
+
+raise Exception
 
 # create nonlinear solver
 NLP = scenario.make_trajectory_opt(w=w0)
 
 # create warm start trajectories
-x_warm = SIM[-1].x
-u_warm = SIM[-1].u
+x_warm = sim_list[-1].x
+u_warm = sim_list[-1].u
 
 # solve
 nlp_out,nlp_solved = NLP(x0,x_warm,u_warm)
 print('NLP solved correctly') if nlp_solved else print('NLP failed')
 
 # plot best solution
-Plotter.plotTrajectory(nlp_out,options={'x':[0,1,2,3],'x_legend':['Position best','Velocity best','Angle best','Angular velocity best'],'u':[0],'u_legend':['Force best'],'color':'orange'},show=True)
+Plotter.plot_trajectory(nlp_out,options={'x':[0,1,2,3],'x_legend':['Position best','Velocity best','Angle best','Angular velocity best'],'u':[0],'u_legend':['Force best'],'color':'orange'},show=True)

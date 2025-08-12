@@ -1,5 +1,8 @@
-from casadi import *
+import casadi as ca
+import numpy as np
 import matplotlib.pyplot as plt
+from typing import Union
+from src.sim_var import SimVar
 
 # TODO: adapt to python notation convention
 
@@ -9,7 +12,7 @@ class Plotter:
         pass
 
     @staticmethod
-    def colors():
+    def colors() -> dict:
         # save colors
         violet = (0.4940, 0.1840, 0.5560)
         blue = (0, 0.4470, 0.7410)
@@ -22,7 +25,7 @@ class Plotter:
         return {'violet':violet,'blue':blue,'orange':orange,'yellow':yellow,'red':red,'green':green,'lblue':lblue}
 
     @staticmethod
-    def plotTrajectory(s, options=None, show=False):
+    def plot_trajectory(s:SimVar,options:dict=None,show:bool=False) -> None:
 
         if options is None:
             options = {}
@@ -100,3 +103,74 @@ class Plotter:
 
         if show:
             plt.show()  # Only call plt.show() after plotting both trajectories
+
+    @staticmethod
+    def plot_car_trajectory(
+        waypoints:Union[ca.DM,np.ndarray],
+        tangent_direction:Union[ca.DM,np.ndarray],
+        sim:SimVar,
+        path_constraint:Union[ca.DM,np.ndarray]=None,
+        show:bool=False,
+        options:dict=None,
+    ) -> None:
+        
+        if options is None:
+            options = {}
+
+        # extract options
+        options = {'legend':'Optimal','color':'orange','color_quiver':'red','linestyle':'--'} | options
+
+        # extract colors
+        colors = Plotter.colors()
+        
+        # extract orthogonal distance from the center of the path
+        e_cg = np.array(sim.x[0,:]).squeeze()[:-1]
+
+        # extract orientation error
+        theta_e = np.array(sim.x[2,:]).squeeze()[:-1]
+
+        # compute absolute angle
+        theta = theta_e + tangent_direction
+
+        # extract orthogonal direction
+        nx, ny = -np.sin(tangent_direction), np.cos(tangent_direction)
+
+        # extract car orientation
+        nx_car, ny_car = -np.sin(theta), np.cos(theta)
+
+        # extract waypoints
+        x_r, y_r = waypoints[0,:], waypoints[1,:]
+
+        # obtain absolute position
+        x, y = x_r + e_cg * nx, y_r + e_cg * ny
+
+        # form lane if required
+        if path_constraint is not None:
+            x_lane_left, y_lane_left = x_r - path_constraint * nx, y_r - path_constraint * ny
+            x_lane_right, y_lane_right = x_r + path_constraint * nx, y_r + path_constraint * ny
+
+        # plot lane
+        plt.figure(2,figsize=(5, 5))
+
+        # plot lane
+        if path_constraint is not None:
+
+            # create coordinates to fill lane space
+            x_poly = np.concatenate([x_lane_left, x_lane_right[::-1]])
+            y_poly = np.concatenate([y_lane_left, y_lane_right[::-1]])
+
+            # fill the lane
+            plt.fill(x_poly, y_poly, color='tab:gray', alpha=0.2)
+
+            # plot lane boundaries
+            plt.plot(x_lane_left,y_lane_left,color='tab:gray',linewidth=1)
+            plt.plot(x_lane_right,y_lane_right,color='tab:gray',linewidth=1)
+
+        # plot absolute 
+        plt.plot(x,y,label=options['legend'],linestyle=options['linestyle'],color=colors[options['color']],linewidth=2)
+
+        # plot orientation
+        # plt.quiver(x,y,nx_car,ny_car,linewidth=1.5,color=colors[options['color_quiver']])
+
+        if show:
+            plt.show()

@@ -4,7 +4,7 @@ import numpy as np
 from scipy.interpolate import splprep, splev, interp1d
 from scipy.integrate import cumulative_trapezoid
 
-def dynamics(uncertainty:Union[ca.SX,ca.DM]=ca.SX.zeros(8)) -> dict:
+def dynamics(uncertainty:Union[ca.SX,ca.DM]=ca.SX.zeros(8),velocity:float=5.0) -> dict:
 
     # define dimensions of the problem
     n_x = 4               # number of states
@@ -19,7 +19,7 @@ def dynamics(uncertainty:Union[ca.SX,ca.DM]=ca.SX.zeros(8)) -> dict:
     w = ca.SX.sym('w',n_w,1)
 
     # exact parameters
-    c_f, c_r, m, v_x, l_f, l_r, i_z = 155494.663, 155494.663, 1140.0, 5.0, 1.165, 1.165, 1436.24
+    c_f, c_r, m, v_x, l_f, l_r, i_z = 155494.663*0.5, 155494.663, 1140.0, velocity, 1.165*0.5, 1.165, 1436.24
 
     # sampling time
     delta_t = 0.01
@@ -143,9 +143,9 @@ def generate_waypoints(waypoints,velocity:float=5.0,sampling_time:float=0.05):
     dx_du_s, dy_du_s   = splev(u_samples, tck, der=1)
     d2x_du2_s, d2y_du2_s = splev(u_samples, tck, der=2)
 
-    # theta  = np.arctan2(dy_du_s, dx_du_s)  # tangent direction (parameterization-invariant)
+    theta  = np.arctan2(dy_du_s, dx_du_s)  # tangent direction (parameterization-invariant)
     kappa  = (dx_du_s*d2y_du2_s - dy_du_s*d2x_du2_s) / (dx_du_s**2 + dy_du_s**2)**1.5  # path curvature
 
     r_s = velocity * kappa
 
-    return waypoints_interpolated, r_s
+    return waypoints_interpolated, r_s, theta
