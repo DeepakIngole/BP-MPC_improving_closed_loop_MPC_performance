@@ -23,13 +23,16 @@ from utils.sys_id import rls
 cleanup()
 
 # choose relative uncertainty on model
-UNCERTAINTY_RANGE = 0.8
+UNCERTAINTY_RANGE = 0.6
 
 # choose constant velocity
 VELOCITY = 10.0
 
 # max iteration number
-ITERATIONS = 50
+ITERATIONS = 200
+
+# choose penalties
+LIN_PENALTY, QUAD_PENALTY = 0.0, 100.0
 
 # choose initial GD stepsize
 RHO = 0.001
@@ -49,7 +52,7 @@ WAYPOINTS = np.hsplit(np.array([[-4,-4],[0,-4],[4,-4],[4,0],[4,4],[0,4],[-4,4],[
 uncertainty = ca.vertcat(0.74123508, -0.78708669, -0.97033045, -0.11980179, 0.75357767, -0.60515449, 0.67895028, 0.71907294)*UNCERTAINTY_RANGE
 dyn_dict, true_theta, nominal_theta = autonomous_car.dynamics(uncertainty=uncertainty,velocity=VELOCITY)
 
-print(ca.norm_2(true_theta-nominal_theta))
+# print(ca.norm_2(true_theta-nominal_theta))
 
 # create dynamics object
 dyn = Dynamics(dyn_dict)
@@ -80,7 +83,7 @@ R_true = 1e-6
 mpc_horizon = 5
 
 # constraints are simple bounds on state and input
-x_max = ca.vertcat(1,5,1,2.5)
+x_max = ca.vertcat(1,5,1,2.75)
 x_min = -x_max
 u_max = ca.pi / 5
 u_min = -u_max
@@ -147,7 +150,7 @@ u_cl = ca.vec(upper_level.param['u_cl'])
 track_cost, cst_viol_l1, cst_viol_l2 = quad_cost_and_bounds(Q_true,R_true,x_cl,u_cl,x_max,x_min)
 
 # put together
-cost = track_cost
+full_cost = track_cost + LIN_PENALTY*cst_viol_l1 + QUAD_PENALTY*cst_viol_l2
 
 # create upper-level constraints
 Hx,hx,_,_ = bound2poly(x_max,x_min,u_max,u_min,upper_horizon+1)
@@ -155,7 +158,7 @@ _,_,Hu,hu = bound2poly(x_max,x_min,u_max,u_min,upper_horizon)
 cst_viol = ca.vcat([Hx@ca.vec(x_cl)-hx,Hu@ca.vec(u_cl)-hu])
 
 # store in upper-level
-upper_level.set_cost(cost,track_cost,cst_viol)
+upper_level.set_cost(full_cost,track_cost,cst_viol)
 
 # create algorithm
 p = upper_level.param['p']
@@ -166,6 +169,7 @@ k = upper_level.param['k']
 parameter_update, parameter_init = gradient_descent(rho=RHO,eta=0.6,log=True)
 # parameter_update, parameter_init = adam(alpha=0.15, beta_1=0.5, beta_2=0.8, epsilon=1e-6)
 
+# apply sys id if required
 if SYS_ID:
 
     # create system identification algorithm
@@ -178,6 +182,7 @@ if SYS_ID:
         idx_pf=range(nominal_theta.shape[0])
     )
 
+    # set parameter update and system identification
     upper_level.set_alg(
         parameter_update=parameter_update,
         parameter_init=parameter_init,
@@ -187,6 +192,7 @@ if SYS_ID:
 
 else:
 
+    # set parameter update only
     upper_level.set_alg(
         parameter_update=parameter_update,
         parameter_init=parameter_init
@@ -209,7 +215,7 @@ Plotter.plot_car_trajectory(
     sim=sim_0,
     path_constraint=1,
     show=False,
-    options={'legend':'Untrained','color':'orange','linestyle':'-.'}
+    options={'legend':'Untrained','color':'orange','linestyle':'-'}
 )
 
 # create plot but do not show
@@ -230,12 +236,37 @@ Plotter.plot_car_trajectory(
     waypoints=waypoints_interpolated,
     tangent_direction=tangent_direction,
     sim=sim_list[-1],
-    path_constraint=1,
-    show=True,
+    show=False,
     options={'legend':'Trained','color':'red','linestyle':'--'}
 )
 
-raise Exception
+
+### COMPUTE BEST ACHIEVABLE PERFORMANCE -----------------------------------------------------
+
+# choose horizon of best mpc
+mpc_horizon_long = 50
+
+# adapt cost
+cost_long_horizon = cost.copy()
+cost_long_horizon['Qx'] = [ca.diag(c_q)] * (mpc_horizon_long-1) + [Qn]
+
+# form ingredients and mpc
+ing_long_horizon = Ingredients(horizon=mpc_horizon_long, dynamics=dyn, cost=cost_long_horizon, constraints=cst)
+mpc_long_horizon = QP(ingredients=ing_long_horizon, p=p, pf=pf)
+
+# form upper level and scenario
+upper_level_long_horizon = UpperLevel(p=p, pf=pf, horizon=upper_horizon, mpc=mpc_long_horizon)
+scenario_longer_horizon = Scenario(dyn,mpc_long_horizon,upper_level_long_horizon)
+
+# adapt initial values of parameters
+init_dict_best = init_dict.copy() | {'theta':true_theta,'pf':true_theta}
+scenario_longer_horizon.set_init(init_dict)
+
+# simulate
+sim_long_horizon,*_ = scenario_longer_horizon.simulate()
+
+# compute cost
+_,best_cost,best_cst_viol = upper_level.cost(sim_long_horizon)
 
 # create nonlinear solver
 NLP = scenario.make_trajectory_opt(w=w0)
@@ -248,5 +279,17 @@ u_warm = sim_list[-1].u
 nlp_out,nlp_solved = NLP(x0,x_warm,u_warm)
 print('NLP solved correctly') if nlp_solved else print('NLP failed')
 
+_,nlp_cost,_ = upper_level.cost(nlp_out)
+
+print(f'nlp cost: {nlp_cost}, mpc long horizon cost: {best_cost}')
+
 # plot best solution
-Plotter.plot_trajectory(nlp_out,options={'x':[0,1,2,3],'x_legend':['Position best','Velocity best','Angle best','Angular velocity best'],'u':[0],'u_legend':['Force best'],'color':'orange'},show=True)
+# Plotter.plot_trajectory(sim_long_horizon,options={'x':[0,1,2,3],'x_legend':['Position best','Velocity best','Angle best','Angular velocity best'],'u':[0],'u_legend':['Force best'],'color':'orange'},show=True)
+
+Plotter.plot_car_trajectory(
+    waypoints=waypoints_interpolated,
+    tangent_direction=tangent_direction,
+    sim=nlp_out,
+    show=True,
+    options={'legend':'Best','color':'blue','linestyle':'-.'}
+)
