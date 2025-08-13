@@ -19,7 +19,7 @@ def dynamics(uncertainty:Union[ca.SX,ca.DM]=ca.SX.zeros(8),velocity:float=5.0) -
     w = ca.SX.sym('w',n_w,1)
 
     # exact parameters
-    c_f, c_r, m, v_x, l_f, l_r, i_z = 155494.663*0.5, 155494.663, 1140.0, velocity, 1.165*0.5, 1.165, 1436.24
+    c_f, c_r, m, v_x, l_f, l_r, i_z = 155494.663, 155494.663, 1140.0, velocity, 1.165, 1.165, 1436.24
 
     # sampling time
     delta_t = 0.01
@@ -29,7 +29,7 @@ def dynamics(uncertainty:Union[ca.SX,ca.DM]=ca.SX.zeros(8),velocity:float=5.0) -
     a_mat[0,1] = 1
     a_mat[1,1] = -(c_f+c_r)/(m*v_x)
     a_mat[1,2] = (c_f+c_r)/m
-    a_mat[1,3] = (c_f*l_f-c_r*l_f)/(m*v_x)
+    a_mat[1,3] = (c_f*l_f-c_r*l_r)/(m*v_x)
     a_mat[2,3] = 1
     a_mat[3,1] = (c_r*l_r-c_f*l_f)/(i_z*v_x)
     a_mat[3,2] = (c_f*l_f-c_r*l_r)/(i_z)

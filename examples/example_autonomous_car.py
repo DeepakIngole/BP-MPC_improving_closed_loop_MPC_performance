@@ -23,10 +23,10 @@ from utils.sample_utils import sample_unit_ball
 cleanup()
 
 # choose relative uncertainty on model
-UNCERTAINTY_RANGE = 0.3
+UNCERTAINTY_RANGE = 0.8
 
 # choose constant velocity
-VELOCITY = 5.0
+VELOCITY = 10.0
 
 # number of parallel models
 N_MODELS = 1
@@ -37,13 +37,17 @@ ITERATIONS = 50
 # radius of uncertainty ball
 BALL_RADIUS = 0.5
 
-RHO = 0.005
+RHO = 0.001
 
 # choose waypoints
 WAYPOINTS = np.hsplit(np.array([[-4,-4],[0,-4],[4,-4],[4,0],[4,4],[0,4],[-4,4],[-4,2],[2,2],[2,-2],[0,-2],[-2,-2],[-2,0],[-4,0],[-4,-2],[-4,-4]]) / 4.0 * 15, 2)
 
 # create dictionary with parameters of cart pendulum
-dyn_dict, true_theta, nominal_theta = autonomous_car.dynamics(uncertainty=ca.DM(np.random.rand(8)*UNCERTAINTY_RANGE*2)-ca.DM.ones(8)*UNCERTAINTY_RANGE,velocity=VELOCITY)
+# uncertainty = ca.DM(np.random.rand(8)*UNCERTAINTY_RANGE*2)-ca.DM.ones(8)*UNCERTAINTY_RANGE
+uncertainty = ca.vertcat(0.74123508, -0.78708669, -0.97033045, -0.11980179, 0.75357767, -0.60515449, 0.67895028, 0.71907294)*UNCERTAINTY_RANGE
+dyn_dict, true_theta, nominal_theta = autonomous_car.dynamics(uncertainty=uncertainty,velocity=VELOCITY)
+
+print(ca.norm_2(true_theta-nominal_theta))
 
 # create dynamics object
 dyn = Dynamics(dyn_dict)
@@ -163,16 +167,16 @@ if N_MODELS == 1:
     upper_level.set_alg(*gradient_descent(rho=RHO,eta=0.6,log=True))
     # upper_level.set_alg(*adam(alpha=0.15, beta_1=0.5, beta_2=0.8, epsilon=1e-6))
 
-    # sample random models
-    theta0 = ca.horzsplit(ca.DM(nominal_theta + BALL_RADIUS * sample_unit_ball(n_theta, N_MODELS).T),1)
+    # initial model is the nominal model
+    theta0 = nominal_theta
 
 else:
     
     # choose update algorithm
-    upper_level.set_alg(*robust_gradient_descent(rho=0.01, eta=0.51, n_models=N_MODELS, n_p=p.shape[0],log=True))
+    upper_level.set_alg(*robust_gradient_descent(rho=RHO, eta=0.6, n_models=N_MODELS, n_p=p.shape[0],log=True))
 
-    # initial model is the nominal model
-    theta0 = nominal_theta
+    # sample random models
+    theta0 = ca.horzsplit(ca.DM(nominal_theta + BALL_RADIUS * sample_unit_ball(n_theta, N_MODELS).T),1)
 
 
 ### CREATE SCENARIO -----------------------------------------------------------
