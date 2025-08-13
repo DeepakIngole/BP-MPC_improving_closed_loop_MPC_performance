@@ -16,8 +16,8 @@ import casadi as ca
 from src.plotter import Plotter
 from src.upper_level import UpperLevel
 import numpy as np
-from utils.parameter_update import gradient_descent, minibatch_descent, adam, robust_gradient_descent
-from utils.sample_utils import sample_unit_ball
+from utils.parameter_update import gradient_descent, adam
+from utils.sys_id import rls
 
 # cleanup jit files
 cleanup()
@@ -28,19 +28,24 @@ UNCERTAINTY_RANGE = 0.8
 # choose constant velocity
 VELOCITY = 10.0
 
-# number of parallel models
-N_MODELS = 1
-
 # max iteration number
 ITERATIONS = 50
 
 # radius of uncertainty ball
 BALL_RADIUS = 0.5
 
+# choose initial GD stepsize
 RHO = 0.001
+
+# choose if sys id will be perfomed
+SYS_ID = False
+LAM = 5
 
 # choose waypoints
 WAYPOINTS = np.hsplit(np.array([[-4,-4],[0,-4],[4,-4],[4,0],[4,4],[0,4],[-4,4],[-4,2],[2,2],[2,-2],[0,-2],[-2,-2],[-2,0],[-4,0],[-4,-2],[-4,-4]]) / 4.0 * 15, 2)
+
+
+### GENERATE MODEL ------------------------------------------------------------------------
 
 # create dictionary with parameters of cart pendulum
 # uncertainty = ca.DM(np.random.rand(8)*UNCERTAINTY_RANGE*2)-ca.DM.ones(8)*UNCERTAINTY_RANGE
@@ -160,31 +165,42 @@ p = upper_level.param['p']
 J_p = upper_level.param['J_p']
 k = upper_level.param['k']
 
-# create update function
-if N_MODELS == 1:
+# choose update algorithm
+parameter_update, parameter_init = gradient_descent(rho=RHO,eta=0.6,log=True)
+# parameter_update, parameter_init = adam(alpha=0.15, beta_1=0.5, beta_2=0.8, epsilon=1e-6)
 
-    # choose update algorithm
-    upper_level.set_alg(*gradient_descent(rho=RHO,eta=0.6,log=True))
-    # upper_level.set_alg(*adam(alpha=0.15, beta_1=0.5, beta_2=0.8, epsilon=1e-6))
+if SYS_ID:
 
-    # initial model is the nominal model
-    theta0 = nominal_theta
+    # create system identification algorithm
+    sys_id_update, sys_id_init, _ = rls(
+        dynamics=dyn,
+        horizon=upper_horizon,
+        lam=LAM,
+        theta0=ca.DM(nominal_theta),
+        jit=False,
+        idx_pf=range(nominal_theta.shape[0])
+    )
+
+    upper_level.set_alg(
+        parameter_update=parameter_update,
+        parameter_init=parameter_init,
+        sys_id_update=sys_id_update,
+        sys_id_init=sys_id_init
+    )
 
 else:
-    
-    # choose update algorithm
-    upper_level.set_alg(*robust_gradient_descent(rho=RHO, eta=0.6, n_models=N_MODELS, n_p=p.shape[0],log=True))
 
-    # sample random models
-    theta0 = ca.horzsplit(ca.DM(nominal_theta + BALL_RADIUS * sample_unit_ball(n_theta, N_MODELS).T),1)
+    upper_level.set_alg(
+        parameter_update=parameter_update,
+        parameter_init=parameter_init
+    )
 
-
-### CREATE SCENARIO -----------------------------------------------------------
+### CREATE SCENARIO AND SIMULATE -----------------------------------------------------------
 
 scenario = Scenario(dyn,MPC,upper_level)
 
 # initialize
-init_dict = {'p':p_init, 'pf':pf_init, 'x': x0, 'w': w0, 'theta':theta0}
+init_dict = {'p':p_init, 'pf':pf_init, 'x': x0, 'w': w0, 'theta':nominal_theta}
 scenario.set_init(init_dict)
 
 # simulate with initial parameter
@@ -204,8 +220,6 @@ Plotter.plot_car_trajectory(
 
 # simulation options
 sim_options = {'save_memory': True, 'use_true_model': False, 'max_k': ITERATIONS, 'true_theta': np.array(ca.DM(true_theta))}
-if N_MODELS > 1:
-    sim_options['simulate_parallel_models'] = True
 
 # test closed loop
 sim_list,_,p_best,_ = scenario.closed_loop(options=sim_options)
