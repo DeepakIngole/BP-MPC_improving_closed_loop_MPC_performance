@@ -16,7 +16,8 @@ import casadi as ca
 from src.plotter import Plotter
 from src.upper_level import UpperLevel
 import numpy as np
-from utils.cost_utils import average_gradient_descent, robust_gradient_descent, gradient_descent, rls, minibatch_descent
+from utils.parameter_update import average_gradient_descent, robust_gradient_descent, gradient_descent, minibatch_descent
+from utils.sys_id import rls
 
 # cleanup jit files
 cleanup()
@@ -158,8 +159,9 @@ k = upper_level.param['k']
 # create update function
 # parameter_update, parameter_init = gradient_descent(rho=0.0001,eta=0.51,log=True)
 parameter_update, parameter_init = minibatch_descent(rho=0.0001,eta=0.51,log=True,batch_size=2)
-sys_id_update, sys_id_init = rls(dynamics=dyn,horizon=upper_horizon,lam=0.1,theta0=theta0[0],jit=False)
-upper_level.set_alg(parameter_update=parameter_update,parameter_init=parameter_init,sys_id_update=sys_id_update,sys_id_init=sys_id_init)
+upper_level.set_alg(parameter_update=parameter_update,parameter_init=parameter_init)
+# sys_id_update, sys_id_init = rls(dynamics=dyn,horizon=upper_horizon,lam=0.1,theta0=theta0[0],jit=False)
+# upper_level.set_alg(parameter_update=parameter_update,parameter_init=parameter_init,sys_id_update=sys_id_update,sys_id_init=sys_id_init)
 # upper_level.set_alg(*average_gradient_descent(rho=0.0001,eta=0.51,log=True))
 # upper_level.set_alg(*robust_gradient_descent(rho=0.0001,eta=0.51,n_models=len(theta0),n_p=p.shape[0],log=True,verbose=False))
 

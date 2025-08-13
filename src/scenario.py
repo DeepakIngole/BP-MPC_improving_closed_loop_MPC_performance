@@ -149,7 +149,7 @@ class Scenario:
     def trajectory_opt(self):
         return self._trajectory_opt
     
-    def make_trajectory_opt(self,theta=None):
+    def make_trajectory_opt(self,theta=None,w=None):
         # TODO: type check and better description
         """
         Creates and returns an optimal control trajectory solver for the system.
@@ -160,6 +160,7 @@ class Scenario:
         Args:
             theta (optional): Parameters for the system dynamics. If provided, the nominal
                 dynamics function is parameterized by `theta`. Default is None.
+            w (optional): disturbance vector. Default is None.
         Returns:
             solver (function): A function that solves the optimal control problem.
                 The solver has the following signature:
@@ -178,11 +179,8 @@ class Scenario:
             - The solver uses IPOPT as the backend optimizer.
         """
   
-        # extract system dynamics
-        if theta is not None:
-            f = lambda x,u: self.dyn.f_nom(x,u,theta)
-        else:
-            f = self.dyn.f_nom
+        if w is not None:
+            assert theta is None, 'You cannot pass theta and w at the same time.'
 
         # extract dimensions
         n = self.dim
@@ -204,7 +202,13 @@ class Scenario:
         for t in range(1,n['T']+1):
         
             # dynamics
-            opti.subject_to( x[:,t] == f(x[:,t-1],u[:,t-1]) )
+            if w is None:
+                if theta is None:
+                    opti.subject_to( x[:,t] == self.dyn.f_nom(x[:,t-1],u[:,t-1]) )
+                else:
+                    opti.subject_to( x[:,t] == self.dyn.f_nom(x[:,t-1],u[:,t-1],theta) )
+            else:
+                opti.subject_to( x[:,t] == self.dyn.f(x[:,t-1],u[:,t-1],w[t-1]) )
 
         # to get cost, create fake simVar and pass it through the cost function
         s = SimVar(n)
@@ -314,10 +318,10 @@ class Scenario:
         def j_cost_func(s):
 
             # get true input cost
-            cost_in_loc = self.upper_level._get_cost_idx(s.x,s.u,s.y,s.p)
+            cost_in_loc = self.upper_level._get_cost_idx(s)
 
             # get true Jacobian
-            j_x,j_u,j_y = self.upper_level._get_cost_jacobian(s.j_x,s.j_u,s.j_y)
+            j_x,j_u,j_y = self.upper_level._get_cost_jacobian(s)
 
             return j_cost_func_temp_mapped(cost_in_loc,j_x,j_u,j_y)
 

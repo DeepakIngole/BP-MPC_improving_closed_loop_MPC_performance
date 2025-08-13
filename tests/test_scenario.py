@@ -58,7 +58,7 @@ def test_set_init_and_set_options():
                 'figures': True, 'random_sampling': True, 'debug_qp': True,
                 'compute_qp_ingredients': True, 'verbosity': 0, 'max_k': 250,
                 'use_true_model': False, 'simulate_parallel_models': True,
-                'compile_mapped_dynamics':True}
+                'compile_mapped_dynamics':False}
     options_2 = {'shift_linearization': True, 'warmstart_first_qp': True, 'warmstart_shift': True,
                 'epsilon': 1e-6, 'roundoff_qp': 10, 'mode': 'optimize', 'gd_type': 'gd',
                 'figures': False, 'random_sampling': False, 'debug_qp': False,
