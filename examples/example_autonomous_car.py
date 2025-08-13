@@ -31,9 +31,6 @@ VELOCITY = 10.0
 # max iteration number
 ITERATIONS = 50
 
-# radius of uncertainty ball
-BALL_RADIUS = 0.5
-
 # choose initial GD stepsize
 RHO = 0.001
 

@@ -171,7 +171,7 @@ scenario.set_init(init_dict)
 S,qp_data_sparse,_ = scenario.simulate()
 
 # create plot but do not show
-Plotter.plotTrajectory(S,options={'x':[0,1,2,3],'x_legend':['Position untrained','Velocity untrained','Angle untrained','Angular velocity untrained'],'u':[0],'u_legend':['Force untrained'],'color':'blue'},show=False)
+Plotter.plot_trajectory(S,options={'x':[0,1,2,3],'x_legend':['Position untrained','Velocity untrained','Angle untrained','Angular velocity untrained'],'u':[0],'u_legend':['Force untrained'],'color':'blue'},show=False)
 
 # test closed loop
 SIM,_,p_best,_ = scenario.closed_loop(options={'max_k':5})
@@ -180,7 +180,7 @@ SIM,_,p_best,_ = scenario.closed_loop(options={'max_k':5})
 p_final = SIM[-1].p
 
 # create plots
-Plotter.plotTrajectory(SIM[-1],options={'x':[0,1,2,3],'x_legend':['Position tuned','Velocity tuned','Angle tuned','Angular velocity tuned'],'u':[0],'u_legend':['Force tuned'],'color':'red'},show=False)
+Plotter.plot_trajectory(SIM[-1],options={'x':[0,1,2,3],'x_legend':['Position tuned','Velocity tuned','Angle tuned','Angular velocity tuned'],'u':[0],'u_legend':['Force tuned'],'color':'red'},show=False)
 
 # create nonlinear solver
 NLP = scenario.make_trajectory_opt()
@@ -194,7 +194,7 @@ nlp_out,nlp_solved = NLP(x0,x_warm,u_warm)
 print('NLP solved correctly') if nlp_solved else print('NLP failed')
 
 # plot best solution
-Plotter.plotTrajectory(nlp_out,options={'x':[0,1,2,3],'x_legend':['Position best','Velocity best','Angle best','Angular velocity best'],'u':[0],'u_legend':['Force best'],'color':'orange'},show=True)
+Plotter.plot_trajectory(nlp_out,options={'x':[0,1,2,3],'x_legend':['Position best','Velocity best','Angle best','Angular velocity best'],'u':[0],'u_legend':['Force best'],'color':'orange'},show=True)
 
 # after training, test speed of dense and sparse qp formulations
 # start with sparse

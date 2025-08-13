@@ -179,12 +179,8 @@ class Scenario:
             - The solver uses IPOPT as the backend optimizer.
         """
   
-        # extract system dynamics
-        if w is None:
-            f = lambda x,u: self.dyn.f_nom(x,u,theta) if theta is not None else self.dyn.f_nom
-        else:
+        if w is not None:
             assert theta is None, 'You cannot pass theta and w at the same time.'
-            f = self.dyn.f
 
         # extract dimensions
         n = self.dim
@@ -206,7 +202,13 @@ class Scenario:
         for t in range(1,n['T']+1):
         
             # dynamics
-            opti.subject_to( x[:,t] == f(x[:,t-1],u[:,t-1]) ) if w is None else opti.subject_to( x[:,t] == f(x[:,t-1],u[:,t-1],w[t-1]) )
+            if w is None:
+                if theta is None:
+                    opti.subject_to( x[:,t] == self.dyn.f_nom(x[:,t-1],u[:,t-1]) )
+                else:
+                    opti.subject_to( x[:,t] == self.dyn.f_nom(x[:,t-1],u[:,t-1],theta) )
+            else:
+                opti.subject_to( x[:,t] == self.dyn.f(x[:,t-1],u[:,t-1],w[t-1]) )
 
         # to get cost, create fake simVar and pass it through the cost function
         s = SimVar(n)
