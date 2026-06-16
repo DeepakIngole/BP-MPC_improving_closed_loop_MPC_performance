@@ -1,8 +1,0 @@
-*.c
-*.o
-*.so
-*.pyc
-BPMPC/__pycache__/
-.idea
-.*
-*.prof
