@@ -1,0 +1,59 @@
+__pycache__
+.*
+
+## Core LaTeX auxiliary files
+*.aux
+*.fdb_latexmk
+*.fls
+*.glg
+*.glo
+*.gls
+*.idx
+*.ilg
+*.ind
+*.ist
+*.lof
+*.log
+*.lot
+*.maf
+*.mtc
+*.mtc0
+*.nav
+*.nlo
+*.out
+*.snm
+*.toc
+*.vrb
+
+## Bibliography files (BibTeX / Biber)
+*.bbl
+*.bcf
+*.blg
+*.run.xml
+
+## PythonTeX / SageTeX auxiliary files
+*.pytxcode
+*.sagetex.sage
+*.sagetex.py
+*.sagetex.scmd
+
+## Synctex files (used for jumping between PDF and code)
+*.synctex
+*.synctex(busy)
+*.synctex.gz
+*.synctex.gz(busy)
+
+## Build directories (if you use tools like latexmk with -output-directory)
+# build/
+# out/
+
+## Backup and autosave files (Editors like Vim, Emacs, Texstudio)
+*~
+*.bak
+*.sav
+*.swp
+*.tex.bak
+
+## Final Deliverables (Optional)
+## Uncomment the line below if you do NOT want to track the compiled PDFs
+# *.pdf
